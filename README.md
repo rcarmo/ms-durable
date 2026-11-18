@@ -45,11 +45,12 @@ Use HTTPS for remote access, either directly or through a reverse proxy which fo
 The UI has independent conversations, streaming text, expandable tool activity, a durable queue, approvals, cancellation, a model picker and native context/compaction controls. Model changes apply at a turn boundary. The UI renders messages with bundled Markdown-it, with raw HTML disabled. On reconnect it reconciles the snapshot and resumes SSE from its last sequence number.
 
 - **Appearance:** follow the system theme or choose light or dark in Settings.
+- **Commands:** type `/` in the composer for shortcuts to New chat, Plan, Context, Rename and Settings.
 - **Images:** attach PNG, JPEG, GIF, WebP or SVG (up to three per message, 1 MiB each). The original bytes live in SQLite and an authenticated media route serves them. The browser displays SVG in image context. Images are not added automatically to model requests. The model can inspect them on demand with the attachment tool.
 - **Tool output:** activity rows show a plain-language summary. Expand a tool call for pretty-printed JSON or plain text in **Readable**. Switch to **Raw** to inspect the recorded arguments, result and error. The paginated session event log is under **Settings → Diagnostics**.
 - **Plan:** open the checklist from the chat header. It docks to the right of chat on desktop and stacks above it on narrow screens. The agent’s changes appear live; each conversation keeps its own plan in SQLite.
 - **Message references:** use the **Copy** icon for text. Select the **Reference** icon or the timestamp to insert a reference into the composer. The composer and transcript show a short turn ID, such as `#e1b4c29a` (seven ID characters plus `a` for answer or `u` for user). Stored references retain the full chat ID, turn ID and role. Select the reference to jump to the message in the same chat. Answers written before timestamp support have no recorded completion time.
-- **Named sessions:** use the pencil in the header to rename a session without changing its ID or handle. Enter an optional unique `@name` before the first send. Names are case-insensitive. Agents can send to named sessions or raw session IDs using the application tool. The recipient sees the sender and no reply is sent back automatically.
+- **Named sessions:** use the pencil in the header to rename a session and update its `@name` without changing its ID. When Luna is available, the dialog summarises up to 20 recent settled turns. Enter an optional unique `@name` before the first send. Names are case-insensitive. Agents can send to named sessions or raw session IDs using the application tool. The recipient sees the sender and no reply is sent back automatically.
 
 Application tools are visible to every application session:
 
@@ -62,7 +63,7 @@ Application tools are visible to every application session:
 
 These tools refer only to this application's database. They do not control Pi sessions or remote agents. A stable `request_id` deduplicates a submitted prompt or compaction request; reusing it with different content fails.
 
-Native permission requests are shown in the UI. Read requests are approved once automatically. Other requests wait for an explicit approval or denial. Copilot can execute commands it classifies as safe without issuing a host permission request; for example, a plain `printf` did not require approval in the browser test. This is not an “approve every shell command” policy.
+Native permission requests are shown in the UI. Read requests are approved once automatically. Other requests wait for an explicit approval or denial. Approve for this session remembers a matching request in that chat until the server restarts. Settings can disable prompts globally; that setting persists. Copilot can execute commands it classifies as safe without issuing a host permission request; for example, a plain `printf` did not require approval in the browser test. This is not an “approve every shell command” policy.
 
 ## Azure Foundry / Azure OpenAI
 

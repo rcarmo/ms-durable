@@ -145,6 +145,10 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
  .message-meta .speaker{margin:0;color:var(--text);overflow-wrap:anywhere;min-width:0}.answer-meta{margin-top:12px}
 #rename-form{display:grid;gap:8px}#rename-name{width:100%;border:1px solid var(--border);border-radius:4px;padding:6px 8px;background:var(--bg)}
 .prompt{white-space:normal}.prompt>:first-child,.answer>:first-child{margin-top:0}.prompt>:last-child,.answer>:last-child{margin-bottom:0}.prompt pre,.answer pre{white-space:pre;overflow:auto;background:var(--panel);padding:8px}.prompt table,.answer table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}.prompt :is(th,td),.answer :is(th,td){padding:4px 8px;border:1px solid var(--border)}.prompt blockquote,.answer blockquote{margin:8px 0;padding:4px 12px;background:var(--panel)}.prompt a,.answer a{color:var(--accent)}
+#rename-handle{width:100%;border:1px solid var(--border);border-radius:4px;padding:6px 8px;background:var(--bg)}.approval .actions{flex-wrap:wrap}
+.tool-payload{position:relative;margin:4px 0 4px 30px;background:var(--panel)}.activity .tool-payload pre{margin:0;padding-top:38px}.tool-payload .tool-view{position:absolute;inset:4px 8px auto auto;margin:0;background:var(--panel);z-index:1}.tool-payload .icon{width:14px;height:14px}
+#slash-menu{display:flex;flex-wrap:wrap;gap:4px;padding:4px;background:var(--panel)}.inline-svg{display:block;max-width:100%;max-height:300px;margin:8px 0}
+.reasoning-content{margin:4px 0 8px 30px;overflow-wrap:anywhere;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -158,7 +162,8 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
 <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol>
 <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
-<symbol id="i-reference" viewBox="0 0 24 24"><path d="M10 14l4-4m-6 7-1 1a3.5 3.5 0 0 1-5-5l4-4a3.5 3.5 0 0 1 5 0m5-2 1-1a3.5 3.5 0 0 1 5 5l-4 4a3.5 3.5 0 0 1-5 0" transform="translate(1 1) scale(.92)"/></symbol>
+<symbol id="i-reference" viewBox="0 0 24 24"><path d="M9 8H7a4 4 0 1 0 0 8h2m6-8h2a4 4 0 1 1 0 8h-2M9 12h6"/></symbol>
+<symbol id="i-attach" viewBox="0 0 24 24"><path d="M20 11 11 20a5 5 0 0 1-7-7L14 3a3 3 0 0 1 4 4L8 17a1.5 1.5 0 0 1-2-2l9-9"/></symbol>
 <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
 <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></symbol>
 <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
@@ -215,13 +220,15 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
       <div id="attachments" aria-label="Attached images"></div>
       <input id="image-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" multiple hidden>
       <label class="sr" for="prompt">Message</label>
+      <div id="slash-menu" aria-label="Chat commands" hidden></div>
       <textarea id="prompt" rows="1" placeholder="Message"></textarea>
       <div class="tools">
         <label class="sr" for="model">Model (applies from the next turn)</label>
         <select id="model" title="Model · applies from the next turn"><option value="">Loading models…</option></select>
-        <button id="attach" type="button" title="Attach PNG, JPEG, GIF, WebP or SVG">Attach image</button>
+
         <span class="grow"></span>
         <button id="stop" type="button" aria-label="Stop" title="Stop the current turn and clear the queue" hidden><svg class="icon"><use href="#i-stop"/></svg></button>
+        <button id="attach" type="button" class="iconbtn" aria-label="Attach file" title="Attach image or SVG"><svg class="icon" aria-hidden="true"><use href="#i-attach"/></svg></button>
         <button id="send" type="submit" class="primary" aria-label="Send" title="Send" disabled><svg class="icon"><use href="#i-send"/></svg></button>
       </div>
     </form>
@@ -241,6 +248,8 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 <dialog id="rename-dialog" aria-labelledby="rename-heading">
   <header><h2 id="rename-heading">Rename session</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
   <div class="body"><form id="rename-form"><label for="rename-name">Session name</label><input id="rename-name" maxlength="100" required>
+    <label for="rename-handle">Agent @name</label><input id="rename-handle" maxlength="33" required>
+    <p id="rename-summary" class="muted" role="status"></p>
     <p id="rename-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="quiet" data-close>Cancel</button><button id="rename-save" class="primary" type="submit">Save</button></div>
   </form></div>
 </dialog>
@@ -248,6 +257,8 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
   <header><h2 id="settings-title">Settings</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
   <div class="body">
     <label>Appearance <select id="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+    <p><label><input type="checkbox" id="approval-prompts" checked> Require tool approvals</label></p>
+    <p class="muted">Turning this off automatically approves tool requests in every chat. Tools run with server-user access.</p>
     <div id="config" class="muted">Not connected.</div>
     <h3 id="diagnostics" hidden>Diagnostics</h3><button id="timeline-button" class="quiet" type="button" hidden>Session event log</button>
     <div class="dialog-actions"><button id="change-token" type="button" class="quiet"><svg class="icon"><use href="#i-key"/></svg>Change access token</button></div>
@@ -379,12 +390,12 @@ function renderApprovals(items) {
     if (why) card.append(node('p', '', why));
     const raw = node('details'); raw.append(node('summary', '', 'Request details'), node('pre', '', format(request))); card.append(raw);
     const actions = node('div', 'actions');
-    for (const [label, allow] of [['Deny', false], ['Approve once', true]]) {
+    for (const [label, allow, remember] of [['Deny', false, false], ['Approve once', true, false], ['Approve for this session', true, true]]) {
       const button = node('button', 'quiet'); button.type = 'button';
       text(button, label);
       button.onclick = async () => {
         actions.querySelectorAll('button').forEach(b => { b.disabled = true; });
-        try { await json('/api/approvals/' + encodeURIComponent(item.id), {method:'POST', body:{allow}}); card.remove(); box.dataset.ids = ''; if (context) { context.approvalCount = Math.max(0, (context.approvalCount || 1) - 1); render(context); } scheduleSnapshot(context); }
+        try { await json('/api/approvals/' + encodeURIComponent(item.id), {method:'POST', body:{allow, remember}}); card.remove(); box.dataset.ids = ''; if (context) { context.approvalCount = Math.max(0, (context.approvalCount || 1) - 1); render(context); } scheduleSnapshot(context); }
         catch(error) { notice(error.message); actions.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
       };
       actions.append(button);
@@ -399,6 +410,7 @@ $('model').addEventListener('change', async () => {
   catch(error) { notice(error.message); }
 });
 function renderConfig() {
+  $('approval-prompts').checked = config.approval_prompts !== false;
   const previous = $('model').value;
   $('model').replaceChildren(...config.models.map(m => { const o = node('option', '', m.name || m.id); o.value = m.id; return o; }));
   if (config.models.some(m => m.id === previous)) $('model').value = previous;
@@ -528,7 +540,24 @@ function expandRefs(text) {
   });
 }
 const renderer = window.markdownit({html:false, breaks:true});
-renderer.disable('image');
+// Keep images in image context. Do not fetch arbitrary URLs from chat text.
+const validateLink = renderer.validateLink;
+const rasterData = /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=]+$/i;
+const chatImage = /^\/api\/sessions\/[\w-]+\/turns\/[\w-]+\/images\/[0-2]$/;
+renderer.validateLink = url => validateLink(url) || (url.length <= 1400000 && rasterData.test(url));
+renderer.renderer.rules.image = (tokens, index) => {
+  const t = tokens[index], src = t.attrGet('src') || '', alt = renderer.utils.escapeHtml(t.content || 'Image');
+  if (src.length <= 1400000 && rasterData.test(src)) return '<img class="inline-svg" alt="' + alt + '" src="' + src + '">';
+  if (chatImage.test(src)) return '<img class="inline-svg" alt="' + alt + '" data-chat-image="' + src + '">';
+  return alt;
+};
+const originalFence = renderer.renderer.rules.fence;
+renderer.renderer.rules.fence = (tokens, index, options, env, self) => {
+  const token = tokens[index], source = token.content.trim();
+  if (token.info.trim().toLowerCase() !== 'svg' || !/^<svg[\s>]/i.test(source) || source.length > 1048576) return originalFence(tokens,index,options,env,self);
+  try { return '<img class="inline-svg" alt="SVG diagram" src="data:image/svg+xml;charset=utf-8,' + renderer.utils.escapeHtml(encodeURIComponent(source)) + '">'; }
+  catch { return originalFence(tokens,index,options,env,self); }
+};
 renderer.inline.ruler.before('link', 'message_ref', (state, silent) => {
   const match = /^\[\[message:(?:([\w-]{1,80}):)?([\w-]{1,80}):(prompt|answer)\]\]/.exec(state.src.slice(state.pos,state.posMax));
   if (!match) return false;
@@ -546,27 +575,39 @@ $('turns').addEventListener('click', event => {
   if (!target || (!target.textContent && !(role === 'prompt' && view.pictures.children.length))) return notice('Referenced message is not in this conversation.');
   target.tabIndex = -1; target.focus(); target.scrollIntoView({block:'center'});
 });
+function loadChatImage(img, url, ctx) {
+  api(url, {signal:ctx.controller.signal}).then(response => response.blob()).then(blob => {
+    if (!img.isConnected || context !== ctx) return;
+    if (blob.type === 'image/svg+xml') {
+      const reader = new FileReader();
+      reader.onload = () => { if (img.isConnected && context === ctx) img.src = reader.result; };
+      reader.readAsDataURL(blob);
+    } else {
+      const src = URL.createObjectURL(blob); imageURLs.add(src); img.src = src;
+    }
+  }).catch(() => { if (img.isConnected && context === ctx) img.replaceWith(node('span','muted','Image unavailable: ' + img.alt)); });
+}
 function showImages(view, turn, ctx) {
   const items = turn.images || [], key = items.map(i => i.digest).join(',');
   if (view.pictures.dataset.key === key) return;
   view.pictures.dataset.key = key; view.pictures.replaceChildren();
   for (const item of items) {
     const img = node('img'); img.alt = item.name; view.pictures.append(img);
-    api('/api/sessions/' + encodeURIComponent(ctx.id) + '/turns/' + encodeURIComponent(turn.id) + '/images/' + item.ordinal, {signal:ctx.controller.signal})
-      .then(r => r.blob()).then(blob => {
-        if (!img.isConnected || context !== ctx) return;
-        if (item.mime === 'image/svg+xml') {
-          // Use an opaque-origin data URL, never a same-origin SVG document URL.
-          const reader = new FileReader(); reader.onload = () => { if (img.isConnected) img.src = reader.result; }; reader.readAsDataURL(blob);
-        } else { const url = URL.createObjectURL(blob); imageURLs.add(url); img.src = url; }
-      })
-      .catch(() => { if (img.isConnected) img.replaceWith(node('span', 'muted', 'Image unavailable: ' + item.name)); });
+    loadChatImage(img, '/api/sessions/' + encodeURIComponent(ctx.id) + '/turns/' + encodeURIComponent(turn.id) + '/images/' + item.ordinal, ctx);
   }
 }
 function markdown(el, source) {
   if (el.md === source) return;
   el.md = source;
-  el.innerHTML = renderer.render(source);
+  // A standalone SVG from an assistant is equivalent to an SVG code fence.
+  const trimmed = source.trim();
+  const svg = /^<svg[\s>][\s\S]*<\/svg>$/i.test(trimmed) && trimmed.length <= 1048576 && !trimmed.includes('```');
+  el.innerHTML = renderer.render(svg ? '```svg\n' + trimmed + '\n```' : source);
+  for (const img of el.querySelectorAll('img[data-chat-image]')) {
+    const ctx = context, url = img.dataset.chatImage;
+    if (!ctx || !url.startsWith('/api/sessions/' + encodeURIComponent(ctx.id) + '/')) continue;
+    loadChatImage(img, url, ctx);
+  }
 }
 const toolLabels = {
   plan:'Working on the plan', chat:'Sending a message', context:'Checking context usage', compact:'Compacting context',
@@ -602,9 +643,9 @@ function highlightTool(pre, body) {
   pre.append(body.slice(end));
 }
 function drawTool(details) {
-  const [readable, raw] = details.children[1].children;
+  const payload = details.lastChild, [readable, raw] = payload.firstChild.children;
   readable.setAttribute('aria-pressed', String(!details.rawMode)); raw.setAttribute('aria-pressed', String(Boolean(details.rawMode)));
-  const pre = details.lastChild;
+  const pre = payload.lastChild;
   if (details.rawMode) { pre.classList.remove('tool-syntax'); text(pre, details.rawOutput); }
   else { pre.replaceChildren(); highlightTool(pre, details.readable); }
 }
@@ -627,15 +668,17 @@ function entry(view, key, iconClass, title, body, raw) {
         b.onclick = () => { d.rawMode = mode === 'Raw'; drawTool(d); };
         modes.append(b);
       }
-      d.append(modes);
-    }
-    d.append(node('pre')); view.entries.set(key, d); view.activity.append(d);
+      const copy = node('button','quiet'); copy.type = 'button'; copy.title = 'Copy tool output'; copy.setAttribute('aria-label',copy.title); copy.append(icon('copy'));
+      copy.onclick = async () => { try { await navigator.clipboard.writeText(d.lastChild.lastChild.textContent); text($('message-feedback'),'Copied'); } catch { notice('Could not access the clipboard.'); } };
+      modes.append(copy);
+      const payload = node('div','tool-payload'); payload.append(modes,node('pre')); d.append(payload);
+    } else d.append(node('div','reasoning-content'));  view.entries.set(key, d); view.activity.append(d);
   }
   const [status, label] = d.firstChild.children;
   const states = {running:['loader','Running','spin'], wait:['shield','Waiting for approval','wait'], bad:['x-circle','Failed or interrupted','bad'], ok:['check','Completed','']};
   const [glyph, statusText, style] = states[iconClass] || ['check','Completed',''];
   setIcon(status.firstChild, glyph, style); text(status.lastChild, statusText); text(label, title);
-  if (raw === undefined) text(d.lastChild, body);
+  if (raw === undefined) markdown(d.lastChild, body);
   else if (d.readable !== body || d.rawOutput !== raw) { d.readable = body; d.rawOutput = raw; drawTool(d); }
 }
 function renderCompaction(v, turn, active) {
@@ -816,7 +859,7 @@ function selectSession(id) {
   detach(); selected = id;
   drawPlan(); if (!id) setPlanOpen(false);
   $('approvals').replaceChildren(); $('approvals').dataset.ids = '';
-  $('prompt').value = drafts.get(id || 'new') || ''; grow(); drawDraftImages();
+  $('prompt').value = drafts.get(id || 'new') || ''; grow(); drawDraftImages(); $('slash-menu').hidden = true;
   $('turns').replaceChildren(); turnNodes.clear();
   openSidebar(false);
   text($('title'), id ? 'Loading…' : 'New conversation'); document.title = 'Chat';
@@ -885,8 +928,18 @@ for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListene
 $('rename-session').onclick = () => {
   if (!context?.session) return;
   const field = $('rename-name'); field.value = context.session.title; text($('rename-error'), '');
-  $('rename-dialog').showModal(); field.focus(); field.select();
+  const ctx = context, dialog = $('rename-dialog');
+  $('rename-handle').value = ctx.session.handle ? '@' + ctx.session.handle : '@' + (sessionName(ctx.session).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^[^a-z]+|-$|^-+/g,'').slice(0,32) || 'session');
+  text($('rename-summary'), config?.summary_model ? 'Summarising recent messages with Luna…' : 'Luna is not available.');
+  dialog.showModal(); field.focus(); field.select();
+  if (config?.summary_model) {
+    const request = dialog.summaryRequest = new AbortController();
+    json('/api/sessions/' + encodeURIComponent(ctx.id) + '/summary', {method:'POST',signal:request.signal})
+      .then(result => { if (!request.signal.aborted && dialog.open) text($('rename-summary'),result.text); })
+      .catch(e => { if (!request.signal.aborted && dialog.open) text($('rename-summary'),e.message); });
+  }
 };
+$('rename-dialog').addEventListener('close', () => $('rename-dialog').summaryRequest?.abort());
 $('rename-form').onsubmit = async event => {
   event.preventDefault();
   const ctx = context, input = $('rename-name'), save = $('rename-save'), title = input.value.trim();
@@ -894,12 +947,19 @@ $('rename-form').onsubmit = async event => {
   if (!title) { text($('rename-error'), 'Enter a session name.'); input.focus(); return; }
   save.disabled = true; input.readOnly = true; text($('rename-error'), '');
   try {
-    const session = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/title', {method:'POST', body:{title}});
+    const session = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/title', {method:'POST', body:{title,handle:$('rename-handle').value.trim()}});
     if (context === ctx) { showSession(ctx, session); render(ctx); $('rename-dialog').close(); }
   } catch (e) { text($('rename-error'), e.message); }
   finally { save.disabled = false; input.readOnly = false; }
 };
 $('open-settings').onclick = () => $('settings-dialog').showModal();
+$('approval-prompts').onchange = async () => {
+  const field = $('approval-prompts'), enabled = field.checked;
+  if (!enabled && !window.confirm('Disable tool approval prompts for every chat? Tools may run commands and modify files without asking.')) { field.checked = true; return; }
+  field.disabled = true;
+  try { await json('/api/settings/approval-prompts',{method:'POST',body:{enabled}}); config.approval_prompts = enabled; }
+  catch(e) { field.checked = !enabled; notice(e.message); } finally { field.disabled = false; }
+};
 $('change-token').onclick = () => { $('settings-dialog').close(); $('auth').hidden = false; $('token').focus(); };
 $('context-button').onclick = () => { if (!selected) return; $('context-dialog').showModal(); loadContext(); };
 $('compact').onclick = async () => {
@@ -932,7 +992,20 @@ $('scrim').onclick = () => openSidebar(false);
 $('new').onclick = () => { if (!sending) selectSession(null); };
 $('jump').onclick = bottom;
 $('transcript').addEventListener('scroll', () => { if (nearBottom()) $('jump').hidden = true; }, {passive:true});
-$('prompt').oninput = () => { drafts.set(selected || 'new', $('prompt').value); grow(); controls(); };
+const slashCommands = {'/new': 'new', '/plan': 'plan-toggle', '/context': 'context-button', '/rename': 'rename-session', '/settings': 'open-settings'};
+function runSlash(command) {
+  const button = $(slashCommands[command]); if (!button || button.hidden || button.disabled) return false;
+  $('prompt').value = ''; $('prompt').dispatchEvent(new Event('input')); button.click(); return true;
+}
+function slashMenu() {
+  const value = $('prompt').value, menu = $('slash-menu'); menu.replaceChildren();
+  if (/^\/[a-z]*$/i.test(value)) for (const [command, id] of Object.entries(slashCommands)) {
+    if (!command.startsWith(value.toLowerCase()) || $(id).hidden || $(id).disabled) continue;
+    const button = node('button','quiet',command); button.type = 'button'; button.onclick = () => runSlash(command); menu.append(button);
+  }
+  menu.hidden = !menu.children.length;
+}
+$('prompt').oninput = () => { drafts.set(selected || 'new', $('prompt').value); grow(); controls(); slashMenu(); };
 $('prompt').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); $('composer').requestSubmit(); } };
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
@@ -941,6 +1014,7 @@ document.addEventListener('keydown', event => {
 });
 $('composer').onsubmit = async event => {
   event.preventDefault();
+  if (Object.hasOwn(slashCommands,$('prompt').value.trim()) && runSlash($('prompt').value.trim())) return;
   const prompt = expandRefs($('prompt').value.trim());
   const images = draftImages();
   if ((!prompt && !images.length) || sending || !config || (context && !context.ready)) return;

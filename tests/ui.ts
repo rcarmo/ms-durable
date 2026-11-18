@@ -17,15 +17,16 @@ const sessions = [
 ];
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12"><script>window.svgRan=true</script><rect width="12" height="12"/></svg>';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+const inline = '\n\n![Inline PNG](data:image/png;base64,' + png.toString('base64') + ')\n\n' + '```svg\n' + svg + '\n```';
 const turns: any[] = [
-  {id: 't1', kind: 'turn', prompt: 'List the files in the workspace.', status: 'done', answer: 'There are two files: `AGENTS.md` and `notes.txt`.\n\n| File | State |\n| --- | --- |\n| notes.txt | **OK** |\n\n<b>literal HTML</b>', created_at: now - 590, finished_at: now - 585, images:[{name:'diagram.svg', ordinal:0, mime:'image/svg+xml', digest:'svg'}, {name:'dot.png', ordinal:1, mime:'image/png', digest:'png'}]},
+  {id: 't1', kind: 'turn', prompt: 'List the files in the workspace.', status: 'done', answer: 'There are two files: `AGENTS.md` and `notes.txt`.\n\n| File | State |\n| --- | --- |\n| notes.txt | **OK** |\n\n<b>literal HTML</b>' + inline, created_at: now - 590, finished_at: now - 585, images:[{name:'diagram.svg', ordinal:0, mime:'image/svg+xml', digest:'svg'}, {name:'dot.png', ordinal:1, mime:'image/png', digest:'png'}]},
   {id: 't2', kind: 'compact', prompt: '', status: 'done', answer: JSON.stringify({success: true, messagesRemoved: 6, tokensRemoved: 4210}), created_at: now - 500},
   {id: 't3', kind: 'turn', prompt: 'Write a short summary to summary.md. [[message:s1:t1:answer]]', sender_id:'s2', sender_handle:'build', status: 'running', answer: '', created_at: now - 30},
 ];
 const events = [
   {seq: 1, turn_id: 't1', type: 'tool.execution_start', data: {toolCallId: 'a', toolName: 'bash', arguments: {command: 'ls -1', description:'Checking which files are present'}}},
   {seq: 2, turn_id: 't1', type: 'tool.execution_complete', data: {toolCallId: 'a', success: true, result: {content: '{"files":["AGENTS.md","notes.txt"],"ok":true}'}}},
-  {seq: 3, turn_id: 't3', type: 'assistant.reasoning_delta', data: {deltaContent: 'I should write the file with the edit tool.'}},
+  {seq: 3, turn_id: 't3', type: 'assistant.reasoning_delta', data: {deltaContent: '**Prepare** the file with the edit tool.'}},
   {seq: 4, turn_id: 't3', type: 'tool.execution_start', data: {toolCallId: 'b', toolName: 'create', arguments: {path: 'summary.md'}}},
 ];
 const pendingApproval = {id: 'p1', status: 'pending', request: JSON.stringify({kind: 'write', fileName: 'summary.md', intention: 'Create the summary file'})};
@@ -40,9 +41,10 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   if (request.headers.get('authorization') !== 'Bearer ' + token) return new Response('{}', {status: 401});
   calls.push(request.method + ' ' + path);
   const json = (value: unknown) => Response.json(value);
-  if (path === '/api/config') return json({models, skills: ['memento'], mcp_servers: ['memento'], working_directory: '/srv/workspace', auth_source: 'Copilot CLI login'});
+  if (path === '/api/config') return json({models, summary_model:'gpt-5.6-luna', skills: ['memento'], mcp_servers: ['memento'], working_directory: '/srv/workspace', auth_source: 'Copilot CLI login'});
   if (path === '/api/sessions' && request.method === 'GET') return json(sessions);
-  if (path === '/api/sessions/s1/title' && request.method === 'POST') { const value = await request.json() as {title:string}; sessions[0].title = value.title; return json(sessions[0]); }
+  if (path === '/api/sessions/s1/summary') return json({text:'Reviewed the release files.',model:'gpt-5.6-luna'});
+  if (path === '/api/sessions/s1/title' && request.method === 'POST') { const value = await request.json() as {title:string,handle:string}; Object.assign(sessions[0],value); return json(sessions[0]); }
   if (path === '/api/sessions/s1') return json({session: sessions[0], turns, events, approvals, plan});
   if (path === '/api/sessions/s1/turns/t1/images/0') return new Response(svg, {headers:{'Content-Type':'image/svg+xml'}});
   if (path === '/api/sessions/s1/turns/t1/images/1') return new Response(png, {headers:{'Content-Type':'image/png'}});
@@ -168,13 +170,20 @@ try {
     await page.getByText('@build',{exact:true}).waitFor();
     const first = page.locator('#message-t1');
     await first.locator('.answer table strong').getByText('OK').waitFor();
+    await page.waitForFunction(() => { const images = [...document.querySelectorAll<HTMLImageElement>('.answer img.inline-svg')]; return images.length === 2 && images.every(img => img.naturalWidth > 0); });
+    await page.locator('#message-t3 summary').filter({hasText:'Thinking through'}).click();
+    await page.locator('.reasoning-content strong').getByText('Prepare').waitFor();
+    await page.locator('#prompt').fill('/'); await page.getByRole('button',{name:'/plan',exact:true}).waitFor();
+    await page.locator('#prompt').fill('/plan'); await page.locator('#prompt').press('Enter');
+    await page.locator('#plan-panel').waitFor(); await page.keyboard.press('Escape');
     if (await first.locator('.answer b').count()) throw new Error('Raw HTML was rendered');
     const slots = await first.locator('.message-meta').evaluateAll(rows => rows.map(row => [row.firstElementChild?.textContent,row.children[1]?.querySelector('time')?.dateTime]));
     if (slots[0][0] !== 'You' || slots[1][0] !== '@review' || slots.some(row => !row[1])) throw new Error('Name must precede timestamp');
-    await page.getByRole('button',{name:'Rename session'}).click(); await page.locator('#rename-name').fill('Review notes');
+    await page.getByRole('button',{name:'Rename session'}).click(); await page.locator('#rename-name').fill('Review notes'); await page.locator('#rename-handle').fill('notes');
+    await page.getByText('Reviewed the release files.').waitFor();
     await page.getByRole('button',{name:'Save',exact:true}).click();
-    await page.locator('#title').filter({hasText:'@review · Review notes'}).waitFor();
-    await page.locator('#sessions button').filter({hasText:'@review · Review notes'}).waitFor();
+    await page.locator('#title').filter({hasText:'@notes · Review notes'}).waitFor();
+    await page.locator('#sessions button').filter({hasText:'@notes · Review notes'}).waitFor();
     for (const t of await first.locator('time').all()) if (!await t.getAttribute('datetime')) throw new Error('Missing timestamp');
     await first.getByRole('button',{name:'Copy answer'}).focus(); await page.keyboard.press('Enter');
     if (!(await page.evaluate(() => navigator.clipboard.readText())).includes('AGENTS.md')) throw new Error('Copy failed');
@@ -196,7 +205,7 @@ try {
     await page.getByRole('button',{name:'Remove diagram.svg'}).waitFor(); await page.locator('#send').click();
     await page.locator('#message-upload img').waitFor();
     await page.reload(); await page.locator('#message-upload img').waitFor();
-    await page.locator('#title').filter({hasText:'@review · Review notes'}).waitFor();
+    await page.locator('#title').filter({hasText:'@notes · Review notes'}).waitFor();
     if (await page.locator('html').getAttribute('data-theme') !== 'dark') throw new Error('Theme not preserved');
   });
   await run('Plan panel: live updates, focus, session separation and narrow layout', {width:390,height:780}, 'light', async page => {

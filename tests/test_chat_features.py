@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 from types import SimpleNamespace
@@ -36,7 +37,11 @@ class QueueOnly:
 def test_image_and_timeline_api(tmp_path):
     settings = Settings(data=tmp_path, access_token="fixture")
     headers = {"Authorization": "Bearer fixture"}
-    image_request = {"prompt": "", "images": [IMAGE], "request_id": "same"}
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+    )
+    raster = {"name": "dot.png", "mime": "image/png", "data": base64.b64encode(png).decode()}
+    image_request = {"prompt": "", "images": [IMAGE, raster], "request_id": "same"}
     with TestClient(create_app(settings, QueueOnly), headers=headers) as client:
         session = client.post("/api/sessions", json={"model": "mock", "handle": "@Review"})
         assert session.status_code == 200 and session.json()["handle"] == "review"
@@ -74,6 +79,12 @@ def test_image_and_timeline_api(tmp_path):
         assert client.get(path.replace(sid, "wrong-session")).status_code == 404
         image = client.get(path)
         assert image.content == SVG
+        assert image.headers["content-type"] == "image/svg+xml"
+        raster_response = client.get(path[:-1] + "1")
+        assert (
+            raster_response.content == png
+            and raster_response.headers["content-type"] == "image/png"
+        )
         assert image.headers["content-disposition"] == "attachment"
         assert "sandbox" in image.headers["content-security-policy"]
         stored = client.get(root).json()["turns"][0]["images"][0]
@@ -134,9 +145,7 @@ async def test_model_can_inspect_timeline_and_attachments(store, tmp_path):
     async def invoke(name, **args):
         return await tools[name].handler(SimpleNamespace(arguments=args))
 
-    first = json.loads(
-        (await invoke("observe_session", session_id="@review")).text_result_for_llm
-    )
+    first = json.loads((await invoke("observe_session", session_id="@review")).text_result_for_llm)
     assert len(first["events"]) == 100
     assert [a["name"] for a in first["turns"][0]["images"]] == ["diagram.svg", "test.png"]
     tail = json.loads(
@@ -208,11 +217,19 @@ def test_rename_session_preserves_identity(tmp_path):
             "/api/sessions", json={"model": "mock", "title": "Old", "handle": "review"}
         ).json()
         path = f"/api/sessions/{session['id']}"
-        assert client.post(path + "/title", json={"title": "   "}).status_code == 422
-        assert client.post("/api/sessions/missing/title", json={"title": "New"}).status_code == 404
-        assert client.post(path + "/title", json={"title": " New "}).json() == {
+        assert (
+            client.post(path + "/title", json={"title": "   ", "handle": "next"}).status_code == 422
+        )
+        assert (
+            client.post(
+                "/api/sessions/missing/title", json={"title": "New", "handle": "next"}
+            ).status_code
+            == 404
+        )
+        assert client.post(path + "/title", json={"title": " New ", "handle": "@Next"}).json() == {
             **session,
             "title": "New",
+            "handle": "next",
         }
         snapshot = client.get(path).json()
         assert (
@@ -220,3 +237,42 @@ def test_rename_session_preserves_identity(tmp_path):
             and snapshot["events"][0]["type"] == "app.session_renamed"
         )
         assert client.get("/vendor/markdown-it.min.js").status_code == 200
+
+
+async def test_session_approval_matches_request_not_call_id(store, tmp_path):
+    runtime = Runtime(Settings(data=tmp_path), store)
+    sid = (await store.create_session("Review", "mock"))["id"]
+    other = (await store.create_session("Other", "mock"))["id"]
+    request = {"kind": "shell", "fullCommandText": "printf hello", "toolCallId": "one"}
+
+    async def decide_once(chat, data, allow, remember=False):
+        task = asyncio.create_task(runtime.permission(chat, data, None))
+        try:
+            async with asyncio.timeout(3):
+                while not (
+                    row := await store.one(
+                        "SELECT id FROM approvals WHERE session_id=? AND status='pending'", (chat,)
+                    )
+                ):
+                    await asyncio.sleep(0.01)
+                await runtime.decide(row["id"], allow, remember=remember)
+                return (await task).kind
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    assert await decide_once(sid, request, True, True) == "approve-once"
+    repeated = {**request, "toolCallId": "two"}
+    assert (
+        await asyncio.wait_for(runtime.permission(sid, repeated, None), 3)
+    ).kind == "approve-once"
+    assert await decide_once(other, repeated, False) == "reject"
+    changed = {**repeated, "fullCommandText": "printf different"}
+    assert await decide_once(sid, changed, False) == "reject"
+    await store.set_approvals_enabled(False)
+    assert (
+        await asyncio.wait_for(runtime.permission(other, changed, None), 3)
+    ).kind == "approve-once"
+    await store.set_approvals_enabled(True)
+    assert await decide_once(other, changed, False) == "reject"

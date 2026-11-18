@@ -31,6 +31,7 @@ class SessionInput(BaseModel):
 
 class RenameInput(BaseModel):
     title: str = Field(min_length=1, max_length=100)
+    handle: str = Field(min_length=1, max_length=33)
 
 
 class TurnInput(BaseModel):
@@ -50,6 +51,11 @@ class CompactionInput(BaseModel):
 
 class ApprovalInput(BaseModel):
     allow: bool
+    remember: bool = False
+
+
+class ApprovalSettings(BaseModel):
+    enabled: bool
 
 
 def create_app(settings: Settings | None = None, runtime_factory=None):
@@ -143,6 +149,8 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
             "working_directory": str(settings.working_directory),
             "auth_source": "Native Copilot login and configured BYOK profiles (server-side)",
             "error": error,
+            "approval_prompts": await app.state.store.approvals_enabled(),
+            "summary_model": getattr(runtime, "summary_model", None),
         }
 
     @app.get("/api/sessions", dependencies=[Depends(auth)])
@@ -162,9 +170,26 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
         if not title:
             raise HTTPException(422, "Enter a session name")
         try:
-            return await app.state.store.rename_session(sid, title)
+            return await app.state.store.rename_session(sid, title, value.handle)
         except KeyError:
             raise HTTPException(404, "Unknown session") from None
+
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @app.post("/api/sessions/{sid}/summary", dependencies=[Depends(auth)])
+    async def summarize_session(sid: str):
+        try:
+            return await app.state.runtime.summarize(sid)
+        except KeyError:
+            raise HTTPException(404, "Unknown session") from None
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc)) from None
+
+    @app.post("/api/settings/approval-prompts", dependencies=[Depends(auth)])
+    async def approval_settings(value: ApprovalSettings):
+        await app.state.store.set_approvals_enabled(value.enabled)
+        return {"enabled": value.enabled}
 
     @app.get("/api/sessions/{sid}", dependencies=[Depends(auth)])
     async def session(sid: str):
@@ -267,7 +292,9 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
     @app.post("/api/approvals/{aid}", dependencies=[Depends(auth)])
     async def approve(aid: str, value: ApprovalInput):
         try:
-            await app.state.runtime.decide(aid, value.allow)
+            if value.remember and not value.allow:
+                raise ValueError("Only an approval can be remembered")
+            await app.state.runtime.decide(aid, value.allow, remember=value.remember)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from None
         return {"status": "approved" if value.allow else "denied"}

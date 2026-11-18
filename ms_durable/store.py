@@ -47,6 +47,7 @@ CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);
 CREATE TABLE IF NOT EXISTS approvals(
  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, turn_id TEXT,
  request TEXT NOT NULL, status TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS session_plans(
  session_id TEXT PRIMARY KEY REFERENCES sessions(id), data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS turn_images(
@@ -119,21 +120,37 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             raise ValueError("Agent name already exists") from None
         return await self.session(sid)
 
-    async def rename_session(self, sid, title):
+    async def rename_session(self, sid, title, handle):
+        handle = self.normalize_handle(handle)
         async with self.transaction() as db:
             cursor = await db.execute("SELECT * FROM sessions WHERE id=?", (sid,))
             previous = await cursor.fetchone()
             if previous is None:
                 raise KeyError("Unknown session")
             session = dict(previous)
-            if session["title"] != title:
-                await db.execute("UPDATE sessions SET title=? WHERE id=?", (title, sid))
+            if (session["title"], session["handle"]) != (title, handle):
+                try:
+                    await db.execute(
+                        "UPDATE sessions SET title=?,handle=? WHERE id=?", (title, handle, sid)
+                    )
+                except aiosqlite.IntegrityError:
+                    raise ValueError("Agent name already exists") from None
                 await db.execute(
                     "INSERT INTO events(session_id,type,data) VALUES(?,?,?)",
-                    (sid, "app.session_renamed", json.dumps({"title": title})),
+                    (sid, "app.session_renamed", json.dumps({"title": title, "handle": handle})),
                 )
-                session["title"] = title
+                session.update(title=title, handle=handle)
             return session
+
+    async def approvals_enabled(self):
+        row = await self.one("SELECT value FROM app_settings WHERE key='approval_prompts'")
+        return row is None or row["value"] != "off"
+
+    async def set_approvals_enabled(self, enabled):
+        await self.execute(
+            "INSERT INTO app_settings VALUES('approval_prompts',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            ("on" if enabled else "off",),
+        )
 
     async def session(self, sid):
         row = await self.one("SELECT * FROM sessions WHERE id=?", (sid,))
