@@ -28,6 +28,10 @@ const events = [
   {seq: 2, turn_id: 't1', type: 'tool.execution_complete', data: {toolCallId: 'a', success: true, result: {content: '{"files":["AGENTS.md","notes.txt"],"ok":true}'}}},
   {seq: 3, turn_id: 't3', type: 'assistant.reasoning_delta', data: {deltaContent: '**Prepare** the file with the edit tool. [Reasoning source](https://reasoning.example/).'}},
   {seq: 4, turn_id: 't3', type: 'tool.execution_start', data: {toolCallId: 'b', toolName: 'create', arguments: {path: 'summary.md'}}},
+  {seq: 6, turn_id: 't1', type: 'tool.execution_start', data: {toolCallId: 'chat-call', toolName: 'chat', arguments: {session_id:'@build',prompt:'Check the build.'}}},
+  {seq: 7, turn_id: 't1', type: 'assistant.reasoning_delta', data: {deltaContent: 'Verify independently.'}},
+  {seq: 8, turn_id: 't1', type: 'app.chat_sent', data: {destination:'@old',message:'An older message.'}},
+  {seq: 9, turn_id: 't1', type: 'tool.execution_start', data: {toolCallId: 'later', toolName: 'read', arguments: {path:'notes.txt'}}},
 ];
 const pendingApproval = {id: 'p1', status: 'pending', request: JSON.stringify({kind: 'write', fileName: 'summary.md', intention: 'Create the summary file'})};
 let approvals = [pendingApproval];
@@ -77,7 +81,7 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   if (path.endsWith('/events')) return new Response(new ReadableStream({start(c) {
     const encode = (s:string) => new TextEncoder().encode(s); c.enqueue(encode(': open\n\n'));
     if (path.includes('/s1/')) timelineListener?.(event => c.enqueue(encode('data: ' + JSON.stringify(event) + '\n\n')));
-    if (path.includes('/s1/')) emitChat = () => c.enqueue(encode('data: ' + JSON.stringify({seq:9001, turn_id:'t1', type:'app.chat_sent',data:{destination:'@build',message:'Check the build.'}}) + '\n\n'));
+    if (path.includes('/s1/')) emitChat = () => c.enqueue(encode('data: ' + JSON.stringify({seq:9001, turn_id:'t1', type:'app.chat_sent',data:{tool_call_id:'chat-call',destination:'@build',message:'Check the build.'}}) + '\n\n'));
     if (path.includes('/s1/')) emitPlan = () => {
       plan.revision++; plan.items[0].status = 'completed';
       c.enqueue(encode('data: ' + JSON.stringify({seq:5,type:'app.plan_updated',data:plan}) + '\n\n'));
@@ -169,7 +173,7 @@ try {
     if (!await page.locator('#sessions [aria-current=true]').evaluate(el => getComputedStyle(el).borderTopStyle === 'solid' && getComputedStyle(el).borderColor !== 'transparent')) throw new Error('Missing selected-session boundary in forced colours');
     await page.emulateMedia({forcedColors:'none',colorScheme:'dark'});
     await page.locator('.activity summary').first().click();
-    await page.locator('.activity pre').filter({hasText: 'notes.txt'}).waitFor();
+    await page.locator('.activity details[open] pre').filter({hasText: 'notes.txt'}).waitFor();
     const output = page.locator('.activity details[open]').first();
     const pre = output.locator('pre');
     await pre.locator('.key').filter({hasText:'command'}).waitFor();
@@ -224,8 +228,11 @@ try {
     await page.getByText('@build',{exact:true}).waitFor();
     await page.locator('#connection[data-state=live]').waitFor();
     emitChat();
-    await page.locator('#message-t1 .sent-message').getByText('Sent to @build').waitFor();
-    await page.locator('#message-t1 .sent-message').getByText('Check the build.').waitFor();
+    const activity = page.locator('#message-t1 .activity > details');
+    await activity.nth(1).locator('summary').getByText(/Sent to @build\s+Check the build\./).waitFor();
+    const labels = await activity.locator('.activity-title > span:first-child').allTextContents();
+    if (JSON.stringify(labels) !== JSON.stringify(['Checking which files are present','Sending a message · @build','Thinking through the request','Sending a message · @old','Reading a file · notes.txt'])) throw new Error('Activity not in event order: ' + JSON.stringify(labels));
+    await activity.nth(3).locator('summary').getByText(/Sent to @old\s+An older message\./).waitFor();
     const first = page.locator('#message-t1');
     await first.locator('.answer table strong').getByText('OK').waitFor();
     await page.waitForFunction(() => { const images = [...document.querySelectorAll<HTMLImageElement>('.answer img.inline-svg')]; return images.length === 2 && images.every(img => img.naturalWidth > 0); });

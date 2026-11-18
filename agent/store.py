@@ -417,7 +417,7 @@ CREATE TABLE IF NOT EXISTS sdk_files(
                     ),
                 )
                 if outgoing:
-                    source_turn, destination, message = outgoing
+                    source_turn, destination, message, tool_call_id = outgoing
                     await db.execute(
                         "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
                         (
@@ -429,6 +429,7 @@ CREATE TABLE IF NOT EXISTS sdk_files(
                                     "destination": destination,
                                     "message": message,
                                     "turn_id": tid,
+                                    **({"tool_call_id": tool_call_id} if tool_call_id else {}),
                                 }
                             ),
                         ),

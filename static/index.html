@@ -175,8 +175,8 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 .shared-file{min-width:0;max-width:100%;border:1px solid var(--border);border-radius:4px;padding:.5rem}
 .shared-file img{--image-height:360px;margin-bottom:.5rem}
 .shared-file button{max-width:100%;overflow-wrap:anywhere;text-align:start}
-.sent-message{border-inline-start:2px solid var(--accent);padding:.4rem .8rem;margin:.5rem 0;background:var(--panel)}
-.sent-message strong{font-size:.85rem}.sent-message p{white-space:pre-wrap;overflow-wrap:anywhere;margin:.25rem 0 0}
+.activity-receipts{display:block;color:var(--text);font-size:.85em;white-space:pre-wrap;overflow-wrap:anywhere}
+.activity-receipts:empty{display:none}
 </style>
 </head>
 <body>
@@ -567,9 +567,8 @@ function newTurn(id) {
   root.id = 'message-' + id; root.tabIndex = -1;
   answerMeta.classList.add('answer-meta');
   const files = node('div', 'shared-files');
-  const sent = node('div', 'sent-messages');
-  root.append(note, promptMeta, prompt, pictures, activity, sent, answerMeta, answer, files, error, state);
-  return {root, prompt, pictures, promptMeta, answerMeta, answer, files, error, activity, sent, state, stateIcon, stateText, note, entries:new Map()};
+  root.append(note, promptMeta, prompt, pictures, activity, answerMeta, answer, files, error, state);
+  return {root, prompt, pictures, promptMeta, answerMeta, answer, files, error, activity, state, stateIcon, stateText, note, entries:new Map()};
 }
 function setTheme(value) {
   $('theme').value = value;
@@ -830,12 +829,13 @@ function formatTool(value) {
   if (parsed && typeof parsed === 'object') return format(parsed);
   return format(value);
 }
-function entry(view, key, iconClass, title, body, raw) {
+function entry(view, key, iconClass, title, body, raw, receipt = '') {
   let d = view.entries.get(key);
   if (!d) {
     d = node('details'); const s = node('summary');
     const status = node('span','activity-status'); status.append(icon('loader'), node('span','sr'));
-    s.append(status, node('span','activity-title'), icon('chevron','activity-chevron'));
+    const label = node('span','activity-title'); label.append(node('span'), node('span','activity-receipts'));
+    s.append(status, label, icon('chevron','activity-chevron'));
     d.append(s);
     if (raw !== undefined) {
       const modes = node('div','tool-view'); modes.setAttribute('role','group'); modes.setAttribute('aria-label','Tool output format');
@@ -853,9 +853,11 @@ function entry(view, key, iconClass, title, body, raw) {
   const [status, label] = d.firstChild.children;
   const states = {running:['loader','Running','spin'], wait:['shield','Waiting for approval','wait'], bad:['x-circle','Failed or interrupted','bad'], ok:['check','Completed','']};
   const [glyph, statusText, style] = states[iconClass] || ['check','Completed',''];
-  setIcon(status.firstChild, glyph, style); text(status.lastChild, statusText); text(label, title);
+  setIcon(status.firstChild, glyph, style); text(status.lastChild, statusText);
+  text(label.firstChild, title); text(label.lastChild, receipt);
   if (raw === undefined) markdown(d.lastChild, body);
   else if (d.readable !== body || d.rawOutput !== raw) { d.readable = body; d.rawOutput = raw; drawTool(d); }
+  return d;
 }
 function renderCompaction(v, turn, active) {
   v.prompt.hidden = true; v.answer.hidden = true; v.activity.hidden = true; v.note.hidden = false; v.root.classList.add('compact');
@@ -891,33 +893,43 @@ function render(ctx) {
       stamp(v.promptMeta, turn.created_at); stamp(v.answerMeta, turn.finished_at);
       v.promptMeta.hidden = !raw && !(turn.images || []).length;
       for (const button of [...v.answerMeta.children].slice(2)) button.hidden = active;
-      let draft = '', thoughts = ''; const tools = new Map(), sent = [];
+      let draft = '', thought;
+      const activity = new Map();
       for (const e of eventsByTurn.get(id) || []) {
         const d = e.data || {};
         if (e.type === 'assistant.message_delta') draft += d.deltaContent || d.delta_content || '';
-        if (e.type === 'assistant.reasoning_delta') thoughts += d.deltaContent || d.delta_content || '';
-        if (e.type === 'app.chat_sent') sent.push(e);
-        if (e.type === 'tool.execution_start' || e.type === 'tool.execution_complete') {
-          const key = String(d.toolCallId ?? d.tool_call_id ?? e.seq), old = tools.get(key) || {};
-          tools.set(key, {...old, ...d, complete: e.type === 'tool.execution_complete' || old.complete});
+        if (e.type === 'assistant.reasoning_delta') {
+          const delta = d.deltaContent || d.delta_content || '';
+          if (!delta) continue;
+          if (!thought) { thought = {thoughts:''}; activity.set('thought:' + e.seq, thought); }
+          thought.thoughts += delta;
+        } else if (['app.chat_sent','tool.execution_start','tool.execution_complete'].includes(e.type)) {
+          thought = null;
+          const call = d.toolCallId || d.tool_call_id;
+          const key = call ? 'tool:' + call : 'event:' + e.seq;
+          let tool = activity.get(key);
+          if (!tool) { tool = {receipts:[]}; activity.set(key, tool); }
+          if (e.type === 'app.chat_sent') tool.receipts.push(d);
+          else { Object.assign(tool, d); tool.complete ||= e.type === 'tool.execution_complete'; }
         }
       }
-      const sentKey = sent.map(e => e.seq).join(',');
-      if (v.sent.dataset.key !== sentKey) {
-        v.sent.dataset.key = sentKey;
-        v.sent.replaceChildren(...sent.map(e => {
-          const card = node('section', 'sent-message');
-          card.append(node('strong', '', 'Sent to ' + e.data.destination), node('p', '', e.data.message));
-          return card;
-        }));
+      let position = 0;
+      for (const [key, tool] of activity) {
+        let row;
+        if (tool.thoughts !== undefined) {
+          row = entry(v, key, active && !draft && tool === thought ? 'running' : 'ok', 'Thinking through the request', tool.thoughts);
+        } else {
+          const sent = tool.receipts, name = tool.toolName || tool.tool_name || (sent.length ? 'chat' : 'Tool');
+          const receipt = sent.map(r => 'Sent to ' + r.destination + '\n' + r.message).join('\n\n');
+          const receiptOnly = sent.length && !tool.toolName && !tool.tool_name && !tool.complete;
+          const outcome = receiptOnly ? 'ok' : !tool.complete ? (active ? (ctx.approvalCount ? 'wait' : 'running') : 'bad') : (tool.success === false ? 'bad' : 'ok');
+          const result = tool.result?.content ?? tool.result ?? tool.error ?? '';
+          const args = tool.arguments ?? (receiptOnly ? {session_id:sent[0].destination, prompt:sent[0].message} : {});
+          row = entry(v, key, outcome, toolSummary({...tool, arguments:args}, name), 'Arguments\n' + formatTool(args) + (tool.complete ? '\n\nResult\n' + formatTool(result) : ''), JSON.stringify({tool:name, arguments:args, result:tool.result, error:tool.error, ...(sent.length ? {deliveries:sent} : {})}), receipt);
+        }
+        const current = v.activity.children[position++]; if (current !== row) v.activity.insertBefore(row, current || null);
       }
-      if (thoughts) entry(v, 'thoughts', active && !draft && !tools.size ? 'running' : 'ok', 'Thinking through the request', thoughts);
-      for (const [key, tool] of tools) {
-        const name = tool.toolName || tool.tool_name || 'Tool';
-        const outcome = !tool.complete ? (active ? (ctx.approvalCount ? 'wait' : 'running') : 'bad') : (tool.success === false ? 'bad' : 'ok');
-        const result = tool.result?.content ?? tool.result ?? tool.error ?? '';
-        entry(v, 'tool:' + key, outcome, toolSummary(tool, name), 'Arguments\n' + formatTool(tool.arguments ?? {}) + (tool.complete ? '\n\nResult\n' + formatTool(result) : ''), JSON.stringify({tool: name, arguments: tool.arguments, result: tool.result, error: tool.error}));
-      }
+      for (const [key, row] of v.entries) if (!activity.has(key)) { row.remove(); v.entries.delete(key); }
       v.answerMeta.hidden = !turn.answer && !draft;
       const waiting = active && !turn.answer && !draft, working = waiting && status !== 'queued' && !v.entries.size;
       v.answer.classList.toggle('working', working);

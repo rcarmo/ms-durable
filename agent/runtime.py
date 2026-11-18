@@ -286,9 +286,14 @@ class Runtime:
         return self.models
 
     def tools(self, own_sid):
-        def make(name, description, properties, required, fn, *, skip_permission=False):
+        def make(
+            name, description, properties, required, fn, *, skip_permission=False, correlate=False
+        ):
             async def handle(invocation):
-                result = await fn(invocation.arguments)
+                options = (
+                    {"tool_call_id": getattr(invocation, "tool_call_id", None)} if correlate else {}
+                )
+                result = await fn(invocation.arguments, **options)
                 if isinstance(result, ToolResult):
                     return result
                 return ToolResult(
@@ -461,7 +466,7 @@ class Runtime:
                 args.get("handle"),
             )
 
-        async def send(args):
+        async def send(args, *, tool_call_id=None):
             target = await self.store.resolve_session(args["session_id"])
             if target["id"] == own_sid:
                 raise ValueError(
@@ -493,10 +498,11 @@ class Runtime:
                     active_id,
                     self.redact("@" + target["handle"] if target["handle"] else target["title"]),
                     self.redact(prompt),
+                    tool_call_id,
                 ),
             )
 
-        async def reply(args):
+        async def reply(args, *, tool_call_id=None):
             active_id = self.active.get(own_sid)
             turn = await self.store.one(
                 "SELECT sender_id,kind FROM turns WHERE id=? AND session_id=? AND status='running'",
@@ -524,11 +530,12 @@ class Runtime:
                     active_id,
                     self.redact("@" + target["handle"] if target["handle"] else target["title"]),
                     prompt,
+                    tool_call_id,
                 ),
             )
             return {"id": result["id"], "status": result["status"]}
 
-        async def delegate(args):
+        async def delegate(args, *, tool_call_id=None):
             parent = self.active.get(own_sid)
             if not await self.store.one(
                 "SELECT 1 FROM turns WHERE id=? AND session_id=? AND status='running' AND sender_id IS NULL AND kind='prompt'",
@@ -575,7 +582,7 @@ class Runtime:
                         key,
                         kind="delegation",
                         sender_id=own_sid,
-                        outgoing=(parent, self.redact(label), prompt),
+                        outgoing=(parent, self.redact(label), prompt, tool_call_id),
                     )
                 except (ValueError, KeyError) as exc:
                     return {**result, "status": "unavailable", "error": str(exc)}
@@ -775,6 +782,7 @@ class Runtime:
                 {"session_id": string, "prompt": string, "request_id": string},
                 ["session_id", "prompt", "request_id"],
                 send,
+                correlate=True,
             ),
             make(
                 "reply_chat",
@@ -782,6 +790,7 @@ class Runtime:
                 {"prompt": string},
                 ["prompt"],
                 reply,
+                correlate=True,
             ),
             make(
                 "delegate_to_sessions",
@@ -803,6 +812,7 @@ class Runtime:
                 },
                 ["tasks", "request_id"],
                 delegate,
+                correlate=True,
             ),
             make(
                 "set_model",

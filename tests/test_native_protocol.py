@@ -379,6 +379,12 @@ async def test_native_azure_routing_resume_and_prefix(
             )
             assert all(name in json.dumps(tool_result) for name in worker_names)
             assert json.dumps(tool_result).count("FOUNDRY_ADAPTER_OK") == 2
+            activity = [e for e in await store.events(sid) if e["turn_id"] == parent["id"]]
+            (start,) = [e["data"] for e in activity if e["type"] == "tool.execution_start"]
+            call_id = start.get("toolCallId") or start.get("tool_call_id")
+            assert call_id
+            deliveries = [e["data"] for e in activity if e["type"] == "app.chat_sent"]
+            assert len(deliveries) == 2 and all(r["tool_call_id"] == call_id for r in deliveries)
 
             original_event = store.event
 

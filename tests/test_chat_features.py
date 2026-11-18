@@ -379,7 +379,8 @@ async def test_named_chat_is_deduplicated_and_one_hop(store, tmp_path, monkeypat
                     "session_id": target,
                     "prompt": "Check the build",
                     "request_id": "stable",
-                }
+                },
+                tool_call_id="chat-call",
             )
         )
         return json.loads(result.text_result_for_llm)
@@ -395,6 +396,7 @@ async def test_named_chat_is_deduplicated_and_one_hop(store, tmp_path, monkeypat
         "destination": "@bob",
         "message": "Check the build",
         "turn_id": message["id"],
+        "tool_call_id": "chat-call",
     }
     assert not (await store.snapshot(bob))["sent_messages"]
     with pytest.raises(ValueError, match="another app session"):
