@@ -47,6 +47,11 @@ CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);
 CREATE TABLE IF NOT EXISTS approvals(
  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, turn_id TEXT,
  request TEXT NOT NULL, status TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS link_preview_cache(
+ url TEXT NOT NULL, scope TEXT NOT NULL, data TEXT NOT NULL, expires_at INTEGER NOT NULL,
+ asset_id TEXT UNIQUE, mime TEXT, content BLOB,
+ PRIMARY KEY(url,scope));
+CREATE INDEX IF NOT EXISTS link_preview_expiry ON link_preview_cache(expires_at);
 CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS session_plans(
  session_id TEXT PRIMARY KEY REFERENCES sessions(id), data TEXT NOT NULL);
@@ -142,6 +147,40 @@ CREATE TABLE IF NOT EXISTS sdk_files(
                 session.update(title=title, handle=handle)
             return session
 
+    async def cached_preview(self, url, scope):
+        row = await self.one(
+            "SELECT data FROM link_preview_cache WHERE url=? AND scope=? AND expires_at>?",
+            (url, scope, int(time.time())),
+        )
+        return json.loads(row["data"]) if row else None
+
+    async def cache_preview(self, url, scope, data, image=None):
+        now = int(time.time())
+        asset_id = uid() if image else None
+        mime, content = image or (None, None)
+        if asset_id:
+            data["image"] = "/media/preview/" + asset_id
+        async with self.transaction() as db:
+            await db.execute("DELETE FROM link_preview_cache WHERE expires_at<=?", (now,))
+            await db.execute(
+                "INSERT INTO link_preview_cache VALUES(?,?,?,?,?,?,?) ON CONFLICT(url,scope) "
+                "DO UPDATE SET data=excluded.data,expires_at=excluded.expires_at, "
+                "asset_id=excluded.asset_id,mime=excluded.mime,content=excluded.content",
+                (url, scope, json.dumps(data), now + 30 * 86400, asset_id, mime, content),
+            )
+
+    async def preview_settings(self):
+        row = await self.one("SELECT value FROM app_settings WHERE key='link_previews'")
+        mode = row["value"] if row else "off"
+        return {"enabled": mode != "off", "any_domain": mode == "public"}
+
+    async def set_preview_settings(self, enabled, any_domain):
+        mode = ("public" if any_domain else "allowlist") if enabled else "off"
+        await self.execute(
+            "INSERT INTO app_settings VALUES('link_previews',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (mode,),
+        )
+
     async def approvals_enabled(self):
         row = await self.one("SELECT value FROM app_settings WHERE key='approval_prompts'")
         return row is None or row["value"] != "off"
@@ -209,6 +248,11 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             ):
                 raise ValueError("request_id already used for different input")
             result["images"] = media
+            if insert.rowcount:
+                await db.execute(
+                    "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
+                    (sid, tid, "app.turn_queued", "{}"),
+                )
             return result
 
     async def event(self, sid, tid, kind, data, sdk_id=None):

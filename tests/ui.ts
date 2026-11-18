@@ -17,7 +17,7 @@ const sessions = [
 ];
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12"><script>window.svgRan=true</script><rect width="12" height="12"/></svg>';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
-const inline = '\n\n![Inline PNG](data:image/png;base64,' + png.toString('base64') + ')\n\n' + '```svg\n' + svg + '\n```';
+const inline = '\n\n[Example](https://example.com/)\n\n![Inline PNG](data:image/png;base64,' + png.toString('base64') + ')\n\n' + '```svg\n' + svg + '\n```';
 const turns: any[] = [
   {id: 't1', kind: 'turn', prompt: 'List the files in the workspace.', status: 'done', answer: 'There are two files: `AGENTS.md` and `notes.txt`.\n\n| File | State |\n| --- | --- |\n| notes.txt | **OK** |\n\n<b>literal HTML</b>' + inline, created_at: now - 590, finished_at: now - 585, images:[{name:'diagram.svg', ordinal:0, mime:'image/svg+xml', digest:'svg'}, {name:'dot.png', ordinal:1, mime:'image/png', digest:'png'}]},
   {id: 't2', kind: 'compact', prompt: '', status: 'done', answer: JSON.stringify({success: true, messagesRemoved: 6, tokensRemoved: 4210}), created_at: now - 500},
@@ -31,6 +31,7 @@ const events = [
 ];
 const pendingApproval = {id: 'p1', status: 'pending', request: JSON.stringify({kind: 'write', fileName: 'summary.md', intention: 'Create the summary file'})};
 let approvals = [pendingApproval];
+let linkPreviews = {enabled:false,any_domain:false};
 const plan = {revision:1, explanation:'Release checklist', items:[{step:'Inspect',status:'in_progress'}]};
 let emitPlan = () => {};
 const calls: string[] = [];
@@ -41,13 +42,16 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   if (request.headers.get('authorization') !== 'Bearer ' + token) return new Response('{}', {status: 401});
   calls.push(request.method + ' ' + path);
   const json = (value: unknown) => Response.json(value);
-  if (path === '/api/config') return json({models, summary_model:'gpt-5.6-luna', skills: ['memento'], mcp_servers: ['memento'], working_directory: '/srv/workspace', auth_source: 'Copilot CLI login'});
+  if (path === '/api/config') return json({models, link_previews:linkPreviews, summary_model:'gpt-5.6-luna', skills: ['memento'], mcp_servers: ['memento'], working_directory: '/srv/workspace', auth_source: 'Copilot CLI login'});
+  if (path === '/api/settings/link-previews') { linkPreviews = await request.json() as typeof linkPreviews; return json(linkPreviews); }
+  if (path === '/api/link-preview') return json({title:'Example preview', description:'Cached description', image:'/media/preview/abcdef'});
+  if (path === '/media/preview/abcdef') return new Response(png, {headers:{'Content-Type':'image/png'}});
   if (path === '/api/sessions' && request.method === 'GET') return json(sessions);
   if (path === '/api/sessions/s1/summary') return json({text:'Reviewed the release files.',model:'gpt-5.6-luna'});
   if (path === '/api/sessions/s1/title' && request.method === 'POST') { const value = await request.json() as {title:string,handle:string}; Object.assign(sessions[0],value); return json(sessions[0]); }
   if (path === '/api/sessions/s1') return json({session: sessions[0], turns, events, approvals, plan});
-  if (path === '/api/sessions/s1/turns/t1/images/0') return new Response(svg, {headers:{'Content-Type':'image/svg+xml'}});
-  if (path === '/api/sessions/s1/turns/t1/images/1') return new Response(png, {headers:{'Content-Type':'image/png'}});
+  if (path === '/media/s1/t1/0') return new Response(svg, {headers:{'Content-Type':'image/svg+xml'}});
+  if (path === '/media/s1/t1/1') return new Response(png, {headers:{'Content-Type':'image/png'}});
   if (path === '/api/sessions/s1/timeline') return json(url.searchParams.get('after') === '0' ? {events:events.slice(0,2),next_after:2} : {events:events.slice(2),next_after:null});
   if (path === '/api/sessions/s1/turns' && request.method === 'POST') {
     const body = await request.json() as any;
@@ -56,7 +60,7 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
     const turn = {id:'upload', prompt:body.prompt, status:'queued', created_at:now, images:[turns[0].images[0]]};
     turns.push(turn); return json(turn);
   }
-  if (path === '/api/sessions/s1/turns/upload/images/0') return new Response(svg,{headers:{'Content-Type':'image/svg+xml'}});
+  if (path === '/media/s1/upload/0') return new Response(svg,{headers:{'Content-Type':'image/svg+xml'}});
   if (path === '/api/sessions/s2') return json({session: sessions[1], turns: [], events: [], approvals: []});
   if (path.endsWith('/events')) return new Response(new ReadableStream({start(c) {
     const encode = (s:string) => new TextEncoder().encode(s); c.enqueue(encode(': open\n\n'));
@@ -229,6 +233,19 @@ try {
     const dock = (await page.locator('#plan-panel').boundingBox())!, chat = (await page.locator('#chat-column').boundingBox())!, input = (await page.locator('#composer').boundingBox())!;
     if (dock.x < chat.x + chat.width || dock.x < input.x + input.width || dock.width !== 320) throw new Error('Plan should dock beside chat and composer');
     await page.screenshot({path: root + '/plan-desktop.png'});
+  });
+  await run('link previews: opt-in settings and cached thumbnail', {width:1280,height:860}, 'light', async page => {
+    await page.goto(url + '#token=' + token);
+    await page.getByRole('link',{name:'Example',exact:true}).waitFor();
+    if (calls.includes('GET /api/link-preview')) throw new Error('Disabled previews requested metadata');
+    await page.locator('#open-settings').click();
+    await page.locator('#preview-enabled').check();
+    await page.locator('#preview-any').check();
+    await page.keyboard.press('Escape');
+    await page.getByRole('link',{name:'Example preview'}).waitFor();
+    await page.waitForFunction(() => (document.querySelector<HTMLImageElement>('.link-preview img')?.naturalWidth || 0) > 0);
+    await page.locator('#open-settings').click(); await page.locator('#preview-enabled').uncheck();
+    await page.keyboard.press('Escape'); await page.locator('.link-preview').waitFor({state:'detached'});
   });
   console.log(JSON.stringify({checks, evidence: root}, null, 2));
 } finally {

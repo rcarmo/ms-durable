@@ -72,9 +72,12 @@ def test_image_and_timeline_api(tmp_path):
         first = client.get(root + "/timeline?limit=1").json()
         assert len(first["events"]) == 1 and first["next_after"] > 0
         second = client.get(root + f"/timeline?limit=1&after={first['next_after']}").json()
-        assert second["next_after"] is None and second["events"][0]["seq"] > first["next_after"]
+        assert second["next_after"] and second["events"][0]["seq"] > first["next_after"]
+        last = client.get(root + f"/timeline?limit=2&after={second['next_after']}").json()
+        assert last["next_after"] is None
+        assert [event["type"] for event in last["events"]] == ["app.turn_queued", "fixture"]
     with TestClient(create_app(settings, QueueOnly), headers=headers) as client:
-        path = root + f"/turns/{tid}/images/0"
+        path = f"/media/{sid}/{tid}/0"
         assert client.get(path, headers={"Authorization": ""}).status_code == 401
         assert client.get(path.replace(sid, "wrong-session")).status_code == 404
         image = client.get(path)
@@ -151,7 +154,7 @@ async def test_model_can_inspect_timeline_and_attachments(store, tmp_path):
     tail = json.loads(
         (await invoke("observe_session", after_seq=first["next_after"])).text_result_for_llm
     )
-    assert len(tail["events"]) == 2 and tail["next_after"] is None
+    assert len(tail["events"]) == 3 and tail["next_after"] is None
     result = await invoke("read_attachment", turn_id=turn["id"], ordinal=0)
     assert json.loads(result.text_result_for_llm)["source"].encode() == SVG
     result = await invoke("read_attachment", turn_id=turn["id"], ordinal=1)
@@ -276,3 +279,60 @@ async def test_session_approval_matches_request_not_call_id(store, tmp_path):
     ).kind == "approve-once"
     await store.set_approvals_enabled(True)
     assert await decide_once(other, changed, False) == "reject"
+
+
+def test_preview_policy_cache_and_thumbnail_expiry(tmp_path, monkeypatch):
+    monkeypatch.setenv("MS_DURABLE_PREVIEW_DOMAINS", "example.com")
+    calls = []
+
+    def metadata(url, domains, any_domain):
+        calls.append((url, domains, any_domain))
+        return {"title": "Example", "image": "https://example.com/image.png"}
+
+    monkeypatch.setattr("ms_durable.app.preview", metadata)
+    monkeypatch.setattr("ms_durable.app.thumbnail", lambda *_: ("image/png", b"fixture-bytes"))
+    settings = Settings(data=tmp_path, access_token="fixture")
+    headers = {"Authorization": "Bearer fixture"}
+    prefs = "/api/settings/link-previews"
+    url = "/api/link-preview?url=https%3A%2F%2Fexample.com%2F"
+    with TestClient(create_app(settings, QueueOnly), headers=headers) as client:
+        assert client.get(url).json() == {} and calls == []
+        assert client.post(prefs, json={"enabled": True}).json() == {
+            "enabled": True,
+            "any_domain": False,
+        }
+        card = client.get(url).json()
+        assert card["title"] == "Example" and card["image"].startswith("/media/preview/")
+        assert client.get(card["image"], headers={"Authorization": ""}).status_code == 401
+        assert client.get(card["image"]).content == b"fixture-bytes"
+        assert calls == [("https://example.com/", {"example.com"}, False)]
+    with TestClient(create_app(settings, QueueOnly), headers=headers) as client:
+        assert client.get(url).json() == card and len(calls) == 1
+        client.post(prefs, json={"enabled": True, "any_domain": True})
+        assert client.get(card["image"]).status_code == 404
+        assert client.get(url).json()["image"] != card["image"]
+        client.post(prefs, json={"enabled": True})
+        import sqlite3
+        from contextlib import closing
+
+        with closing(sqlite3.connect(tmp_path / "app.sqlite")) as db, db:
+            assert db.execute(
+                "SELECT min(expires_at - unixepoch()) FROM link_preview_cache"
+            ).fetchone()[0] in range(2591990, 2592001)
+            db.execute("UPDATE link_preview_cache SET expires_at=0")
+        assert client.get(card["image"]).status_code == 404
+        assert client.get(url).json()["image"] != card["image"]
+        assert len(calls) == 3
+
+
+def test_external_preview_rejects_nonpublic_and_unlisted_hosts(monkeypatch):
+    from ms_durable.previews import preview
+
+    def resolve(*args, **kwargs):
+        return [(None, None, None, None, ("192.168.1.1", 443))]
+
+    monkeypatch.setattr("ms_durable.previews.socket.getaddrinfo", resolve)
+    with pytest.raises(ValueError, match="not public"):
+        preview("https://example.com/", set(), True)
+    with pytest.raises(ValueError, match="not enabled"):
+        preview("https://example.com/", set(), False)

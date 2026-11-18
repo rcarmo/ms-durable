@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import http.client
 import json
 import os
 import secrets
@@ -16,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .media import MAX_BODY, MAX_IMAGES, ImageInput
+from .previews import preview, thumbnail
 from .runtime import Runtime
 from .store import Store
 
@@ -58,8 +60,19 @@ class ApprovalSettings(BaseModel):
     enabled: bool
 
 
+class PreviewSettings(BaseModel):
+    enabled: bool
+    any_domain: bool = False
+
+
 def create_app(settings: Settings | None = None, runtime_factory=None):
     settings = settings or Settings()
+    preview_slots = asyncio.Semaphore(3)
+    preview_domains = {
+        host.strip().lower().rstrip(".")
+        for host in os.getenv("MS_DURABLE_PREVIEW_DOMAINS", "").split(",")
+        if host.strip()
+    }
 
     @asynccontextmanager
     async def lifespan(app):
@@ -149,6 +162,7 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
             "working_directory": str(settings.working_directory),
             "auth_source": "Native Copilot login and configured BYOK profiles (server-side)",
             "error": error,
+            "link_previews": await app.state.store.preview_settings(),
             "approval_prompts": await app.state.store.approvals_enabled(),
             "summary_model": getattr(runtime, "summary_model", None),
         }
@@ -224,15 +238,75 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from None
 
+    @app.post("/api/settings/link-previews", dependencies=[Depends(auth)])
+    async def set_previews(value: PreviewSettings):
+        await app.state.store.set_preview_settings(value.enabled, value.any_domain)
+        return await app.state.store.preview_settings()
+
+    @app.get("/api/link-preview", dependencies=[Depends(auth)])
+    async def link_preview(url: str = Query(max_length=2048)):
+        store = app.state.store
+        prefs = await store.preview_settings()
+        if not prefs["enabled"]:
+            return {}
+        url = url.split("#", 1)[0]
+        scope = (
+            "public" if prefs["any_domain"] else "allowlist:" + ",".join(sorted(preview_domains))
+        )
+        cached = await store.cached_preview(url, scope)
+        if cached is not None:
+            return cached
+        if preview_slots.locked():
+            return {}
+        async with preview_slots:
+            try:
+                result = await asyncio.to_thread(preview, url, preview_domains, prefs["any_domain"])
+            except (OSError, ValueError, UnicodeError, http.client.HTTPException):
+                return {}
+            image_url = result.pop("image", None)
+            image = None
+            if image_url:
+                try:
+                    image = await asyncio.to_thread(
+                        thumbnail, image_url, preview_domains, prefs["any_domain"]
+                    )
+                except (OSError, ValueError, http.client.HTTPException):
+                    pass  # A missing thumbnail must not discard the card metadata.
+            if result or image:
+                await store.cache_preview(url, scope, result, image)
+            return result
+
+    @app.get("/media/preview/{asset_id}", dependencies=[Depends(auth)])
+    async def preview_media(asset_id: str):
+        prefs = await app.state.store.preview_settings()
+        scope = (
+            "public" if prefs["any_domain"] else "allowlist:" + ",".join(sorted(preview_domains))
+        )
+        item = (
+            await app.state.store.one(
+                "SELECT mime,content FROM link_preview_cache WHERE asset_id=? AND scope=? AND expires_at > unixepoch()",
+                (asset_id, scope),
+            )
+            if prefs["enabled"]
+            else None
+        )
+        if item is None:
+            raise HTTPException(404, "Unknown media")
+        return media_response(item)
+
+    @app.get("/media/{sid}/{tid}/{ordinal}", dependencies=[Depends(auth)])
     @app.get("/api/sessions/{sid}/turns/{tid}/images/{ordinal}", dependencies=[Depends(auth)])
-    async def image(sid: str, tid: str, ordinal: int):
+    async def media(sid: str, tid: str, ordinal: int):
         item = await app.state.store.one(
             "SELECT mime,content FROM turn_images JOIN turns ON turns.id=turn_images.turn_id "
             "WHERE turns.session_id=? AND turn_id=? AND ordinal=?",
             (sid, tid, ordinal),
         )
         if item is None:
-            raise HTTPException(404, "Unknown image")
+            raise HTTPException(404, "Unknown media")
+        return media_response(item)
+
+    def media_response(item):
         return Response(
             item["content"],
             media_type=item["mime"],

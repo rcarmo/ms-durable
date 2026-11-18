@@ -149,6 +149,8 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 .tool-payload{position:relative;margin:4px 0 4px 30px;background:var(--panel)}.activity .tool-payload pre{margin:0;padding-top:38px}.tool-payload .tool-view{position:absolute;inset:4px 8px auto auto;margin:0;background:var(--panel);z-index:1}.tool-payload .icon{width:14px;height:14px}
 #slash-menu{display:flex;flex-wrap:wrap;gap:4px;padding:4px;background:var(--panel)}.inline-svg{display:block;max-width:100%;max-height:300px;margin:8px 0}
 .reasoning-content{margin:4px 0 8px 30px;overflow-wrap:anywhere;color:var(--muted)}
+.link-preview:not(:empty){border:1px solid var(--border);border-radius:4px;padding:8px 12px;margin:6px 0;overflow-wrap:anywhere}.link-preview p{margin:4px 0 0}
+.link-preview img{max-width:100%;max-height:160px;display:block;margin-bottom:6px;object-fit:contain}
 </style>
 </head>
 <body>
@@ -259,6 +261,9 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
     <label>Appearance <select id="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
     <p><label><input type="checkbox" id="approval-prompts" checked> Require tool approvals</label></p>
     <p class="muted">Turning this off automatically approves tool requests in every chat. Tools run with server-user access.</p>
+    <p><label><input type="checkbox" id="preview-enabled"> Show link previews</label></p>
+    <p><label><input type="checkbox" id="preview-any"> Any public HTTPS domain</label></p>
+    <p class="muted">Previews fetch link metadata from the server. With Any domain off, only server-configured domains are eligible.</p>
     <div id="config" class="muted">Not connected.</div>
     <h3 id="diagnostics" hidden>Diagnostics</h3><button id="timeline-button" class="quiet" type="button" hidden>Session event log</button>
     <div class="dialog-actions"><button id="change-token" type="button" class="quiet"><svg class="icon"><use href="#i-key"/></svg>Change access token</button></div>
@@ -411,6 +416,7 @@ $('model').addEventListener('change', async () => {
 });
 function renderConfig() {
   $('approval-prompts').checked = config.approval_prompts !== false;
+  setPreviewFields();
   const previous = $('model').value;
   $('model').replaceChildren(...config.models.map(m => { const o = node('option', '', m.name || m.id); o.value = m.id; return o; }));
   if (config.models.some(m => m.id === previous)) $('model').value = previous;
@@ -543,7 +549,7 @@ const renderer = window.markdownit({html:false, breaks:true});
 // Keep images in image context. Do not fetch arbitrary URLs from chat text.
 const validateLink = renderer.validateLink;
 const rasterData = /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=]+$/i;
-const chatImage = /^\/api\/sessions\/[\w-]+\/turns\/[\w-]+\/images\/[0-2]$/;
+const chatImage = /^(?:\/media\/[\w-]+\/[\w-]+\/\d+|\/api\/sessions\/[\w-]+\/turns\/[\w-]+\/images\/[0-2])$/;
 renderer.validateLink = url => validateLink(url) || (url.length <= 1400000 && rasterData.test(url));
 renderer.renderer.rules.image = (tokens, index) => {
   const t = tokens[index], src = t.attrGet('src') || '', alt = renderer.utils.escapeHtml(t.content || 'Image');
@@ -593,7 +599,30 @@ function showImages(view, turn, ctx) {
   view.pictures.dataset.key = key; view.pictures.replaceChildren();
   for (const item of items) {
     const img = node('img'); img.alt = item.name; view.pictures.append(img);
-    loadChatImage(img, '/api/sessions/' + encodeURIComponent(ctx.id) + '/turns/' + encodeURIComponent(turn.id) + '/images/' + item.ordinal, ctx);
+    loadChatImage(img, '/media/' + encodeURIComponent(ctx.id) + '/' + encodeURIComponent(turn.id) + '/' + item.ordinal, ctx);
+  }
+}
+function addLinkPreviews(el) {
+  const ctx = context;
+  if (!ctx || !config?.link_previews?.enabled || !el.matches('.prompt,.answer')) return;
+  const cache = ctx.previews ||= new Map();
+  const links = [...new Set([...el.querySelectorAll('a[href^="https://"]')].map(a => a.href))].slice(0, 3);
+  for (const url of links) {
+    if (!cache.has(url)) {
+      if (cache.size >= 24) break;
+      cache.set(url, json('/api/link-preview?url=' + encodeURIComponent(url), {signal:ctx.controller.signal}).catch(() => null));
+    }
+    const card = node('div', 'link-preview'); el.append(card);
+    cache.get(url).then(data => {
+      if (context !== ctx || !card.isConnected || cache !== ctx.previews) return;
+      if (!data?.title && !data?.description && !data?.image) { card.remove(); return; }
+      const a = node('a', '', data.title || new URL(url).hostname); a.href = url;
+      card.append(a);
+      if (/^\/media\/preview\/[a-f0-9-]+$/.test(data.image || '')) {
+        const img = node('img'); img.alt = ''; card.prepend(img); loadChatImage(img,data.image,ctx);
+      }
+      if (data.description) card.append(node('p','muted',data.description));
+    });
   }
 }
 function markdown(el, source) {
@@ -605,9 +634,10 @@ function markdown(el, source) {
   el.innerHTML = renderer.render(svg ? '```svg\n' + trimmed + '\n```' : source);
   for (const img of el.querySelectorAll('img[data-chat-image]')) {
     const ctx = context, url = img.dataset.chatImage;
-    if (!ctx || !url.startsWith('/api/sessions/' + encodeURIComponent(ctx.id) + '/')) continue;
+    if (!ctx || !['/media/', '/api/sessions/'].some(prefix => url.startsWith(prefix + encodeURIComponent(ctx.id) + '/'))) continue;
     loadChatImage(img, url, ctx);
   }
+  addLinkPreviews(el);
 }
 const toolLabels = {
   plan:'Working on the plan', chat:'Sending a message', context:'Checking context usage', compact:'Compacting context',
@@ -820,7 +850,9 @@ async function stream(ctx) {
       function consumeLine() {
         if (line === '') {
           if (dataLines.length) {
-            const event = JSON.parse(dataLines.join('\n')); applyEvent(ctx, event); render(ctx); scheduleSnapshot(ctx); backoff = 1000;
+            const event = JSON.parse(dataLines.join('\n')); applyEvent(ctx, event); render(ctx);
+            if (['app.turn_queued','app.turn_started','app.turn_settled','app.approval','app.session_renamed'].includes(event.type)) scheduleSnapshot(ctx);
+            backoff = 1000;
           }
           dataLines = [];
         } else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
@@ -953,6 +985,27 @@ $('rename-form').onsubmit = async event => {
   finally { save.disabled = false; input.readOnly = false; }
 };
 $('open-settings').onclick = () => $('settings-dialog').showModal();
+function setPreviewFields() {
+  const prefs = config?.link_previews || {};
+  $('preview-enabled').checked = Boolean(prefs.enabled); $('preview-any').checked = Boolean(prefs.any_domain);
+  $('preview-any').disabled = !prefs.enabled;
+}
+$('preview-enabled').onchange = $('preview-any').onchange = async () => {
+  const enabled = $('preview-enabled'), any = $('preview-any');
+  enabled.disabled = any.disabled = true;
+  try {
+    config.link_previews = await json('/api/settings/link-previews', {method:'POST',body:{enabled:enabled.checked, any_domain:any.checked}});
+    if (context) {
+      context.previews = new Map();
+      for (const [id, view] of turnNodes) {
+        const turn = context.turns.find(t => t.id === id);
+        if (turn?.prompt) { view.prompt.md = null; markdown(view.prompt, turn.prompt); }
+        view.answer.md = null;
+      }
+      render(context);
+    }
+  } catch(e) { notice(e.message); } finally { enabled.disabled = false; setPreviewFields(); }
+};
 $('approval-prompts').onchange = async () => {
   const field = $('approval-prompts'), enabled = field.checked;
   if (!enabled && !window.confirm('Disable tool approval prompts for every chat? Tools may run commands and modify files without asking.')) { field.checked = true; return; }

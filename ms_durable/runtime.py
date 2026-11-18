@@ -711,6 +711,10 @@ class Runtime:
                     )
                     if claimed.rowcount != 1:
                         continue
+                    await db.execute(
+                        "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
+                        (sid, tid, "app.turn_started", "{}"),
+                    )
                 session = await self.session(sid)
                 status = await self.store.one("SELECT status FROM turns WHERE id=?", (tid,))
                 if status["status"] != "running":
