@@ -28,10 +28,62 @@ class QueueOnly:
     async def close(self):
         pass
 
+    async def delete_session(self, sid):
+        await self.store.delete_session(sid)
+
     async def enqueue(self, *args, **kwargs):
         turn = await self.store.submit(*args, **kwargs)
         await self.store.event(turn["session_id"], turn["id"], "fixture", {}, turn["id"])
         return turn
+
+
+def test_session_activity_and_delete_api(tmp_path):
+    settings = Settings(data=tmp_path, access_token="fixture")
+    headers = {"Authorization": "Bearer fixture"}
+    with TestClient(create_app(settings, QueueOnly), headers=headers) as client:
+        sid = client.post("/api/sessions", json={"model": "mock"}).json()["id"]
+        root = f"/api/sessions/{sid}"
+        assert client.get("/api/sessions").json()[0]["activity"] == "idle"
+        assert client.delete(root, headers={"Authorization": ""}).status_code == 401
+        assert (
+            client.post(root + "/turns", json={"prompt": "work", "request_id": "work"}).status_code
+            == 200
+        )
+        assert client.get("/api/sessions").json()[0]["activity"] == "queued"
+        assert client.delete(root).status_code == 409
+        idle = client.post("/api/sessions", json={"model": "mock"}).json()["id"]
+        assert client.delete(f"/api/sessions/{idle}").status_code == 204
+        assert client.get(f"/api/sessions/{idle}").status_code == 404
+        assert [row["id"] for row in client.get("/api/sessions").json()] == [sid]
+
+
+@pytest.mark.asyncio
+async def test_delete_session_removes_owned_rows_only(store):
+    sid = (await store.create_session("remove", "mock"))["id"]
+    other = (await store.create_session("keep", "mock"))["id"]
+    image = ("diagram.svg", "image/svg+xml", "digest", SVG)
+    tid = (await store.submit(sid, "", "image", images=[image]))["id"]
+    await store.execute("UPDATE turns SET status='running' WHERE id=?", (tid,))
+    assert {row["id"]: row["activity"] for row in await store.list_sessions()} == {
+        other: "idle",
+        sid: "running",
+    }
+    with pytest.raises(ValueError, match="running"):
+        await store.delete_session(sid)
+    await store.execute("UPDATE turns SET status='done' WHERE id=?", (tid,))
+    await store.execute("INSERT INTO sdk_files VALUES(?,?,?,0,0)", (sid, "/fixture", b"content"))
+    await store.execute("INSERT INTO session_plans VALUES(?,?)", (sid, "{}"))
+    await store.execute(
+        "INSERT INTO approvals VALUES(?,?,?,'{}','approved',0)", ("permit", sid, tid)
+    )
+    receipt = await store.submit(other, "delivered", "message", sender_id=sid)
+    await store.delete_session(sid)
+    for table in ("turn_images", "session_plans", "approvals", "sdk_files"):
+        assert not await store.rows(f"SELECT * FROM {table}")
+    assert not await store.events(sid)
+    assert (await store.snapshot(other))["turns"][0]["id"] == receipt["id"]
+    with pytest.raises(KeyError):
+        await store.submit(sid, "gone", "request")
 
 
 def test_image_and_timeline_api(tmp_path):

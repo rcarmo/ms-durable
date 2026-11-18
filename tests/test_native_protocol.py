@@ -308,6 +308,11 @@ async def test_native_azure_routing_resume_and_prefix(
             assert all(
                 c["provider_name"] == "foundry" and c["session_id"] == sid for c in callbacks
             )
+            await runtime.delete_session(sid)
+            assert sid not in runtime.sessions
+            assert not await store.rows("SELECT 1 FROM sdk_files WHERE namespace=?", (sid,))
+            with pytest.raises(KeyError):
+                await store.session(sid)
     finally:
         release_stalled_response.set()
         await runtime.close()

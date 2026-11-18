@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS events(
  turn_id TEXT, sdk_id TEXT, type TEXT NOT NULL, data TEXT NOT NULL,
  UNIQUE(session_id,sdk_id));
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);
+CREATE INDEX IF NOT EXISTS pending_turns ON turns(session_id,status) WHERE status IN ('queued','running');
 CREATE TABLE IF NOT EXISTS approvals(
  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, turn_id TEXT,
  request TEXT NOT NULL, status TEXT NOT NULL, created_at REAL NOT NULL);
@@ -191,6 +192,39 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             ("on" if enabled else "off",),
         )
 
+    async def list_sessions(self):
+        return await self.rows("""
+            SELECT sessions.*, CASE
+                WHEN EXISTS (SELECT 1 FROM turns WHERE session_id=sessions.id AND status='running') THEN 'running'
+                WHEN EXISTS (SELECT 1 FROM turns WHERE session_id=sessions.id AND status='queued') THEN 'queued'
+                ELSE 'idle'
+            END AS activity FROM sessions ORDER BY created_at DESC
+        """)
+
+    async def delete_session(self, sid):
+        async with self.transaction() as db:
+            if not await (await db.execute("SELECT 1 FROM sessions WHERE id=?", (sid,))).fetchone():
+                raise KeyError("Unknown session")
+            if await (
+                await db.execute(
+                    "SELECT 1 FROM turns WHERE session_id=? AND status IN ('queued','running')",
+                    (sid,),
+                )
+            ).fetchone():
+                raise ValueError(
+                    "Stop or finish queued and running work before deleting this session"
+                )
+            for sql in (
+                "DELETE FROM turn_images WHERE turn_id IN (SELECT id FROM turns WHERE session_id=?)",
+                "DELETE FROM turns WHERE session_id=?",
+                "DELETE FROM events WHERE session_id=?",
+                "DELETE FROM approvals WHERE session_id=?",
+                "DELETE FROM session_plans WHERE session_id=?",
+                "DELETE FROM sdk_files WHERE namespace=?",
+                "DELETE FROM sessions WHERE id=?",
+            ):
+                await db.execute(sql, (sid,))
+
     async def session(self, sid):
         row = await self.one("SELECT * FROM sessions WHERE id=?", (sid,))
         if row is None:
@@ -217,8 +251,9 @@ CREATE TABLE IF NOT EXISTS sdk_files(
         return row
 
     async def submit(self, sid, prompt, request_id, kind="prompt", *, images=(), sender_id=None):
-        await self.session(sid)
         async with self.transaction() as db:
+            if not await (await db.execute("SELECT 1 FROM sessions WHERE id=?", (sid,))).fetchone():
+                raise KeyError("Unknown session")
             insert = await db.execute(
                 "INSERT OR IGNORE INTO turns(id,session_id,request_id,prompt,status,created_at,kind,sender_id) "
                 "VALUES(?,?,?,?, 'queued',?,?,?)",

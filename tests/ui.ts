@@ -114,10 +114,10 @@ try {
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       }
       const layoutMs = (await layout() - before) * 1000;
-      await page.locator('#sessions button').getByText('Check the backup job').click();
+      await page.locator('#sessions .session-select').getByText('Check the backup job').click();
       await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
       delay = true;
-      await page.locator('#sessions button').getByText('Summarise the release notes', {exact:false}).click();
+      await page.locator('#sessions .session-select').getByText('Summarise the release notes', {exact:false}).click();
       try {
         const cachedBeforeResponse = await page.locator('#message-bulk-399').count() === 1;
         console.log(JSON.stringify({turns:fixture.length, resizes:12, layoutMs, cachedBeforeResponse}));
@@ -182,7 +182,7 @@ try {
     await page.locator('#config').filter({hasText: '/srv/workspace'}).waitFor();
     await page.screenshot({path: root + '/settings.png'});
     await page.keyboard.press('Escape');
-    await page.locator('#sessions button').nth(1).click();
+    await page.locator('#sessions .session-select').nth(1).click();
     await page.locator('#empty').waitFor({state: 'visible'});
     await page.locator('#new').click();
     await page.locator('#title').filter({hasText: 'New conversation'}).waitFor();
@@ -228,7 +228,7 @@ try {
     await page.getByText('Reviewed the release files.').waitFor();
     await page.getByRole('button',{name:'Save',exact:true}).click();
     await page.locator('#title').filter({hasText:'@notes · Review notes'}).waitFor();
-    await page.locator('#sessions button').filter({hasText:'@notes · Review notes'}).waitFor();
+    await page.locator('#sessions .session-select').filter({hasText:'@notes · Review notes'}).waitFor();
     for (const t of await first.locator('time').all()) if (!await t.getAttribute('datetime')) throw new Error('Missing timestamp');
     await first.getByRole('button',{name:'Copy answer'}).focus(); await page.keyboard.press('Enter');
     if (!(await page.evaluate(() => navigator.clipboard.readText())).includes('AGENTS.md')) throw new Error('Copy failed');
@@ -266,14 +266,49 @@ try {
     await page.keyboard.press('Escape');
     if (await page.locator('#plan-panel').isVisible() || !await page.locator('#plan-toggle').evaluate(el => el === document.activeElement)) throw new Error('Escape did not restore focus');
     await page.locator('#plan-toggle').click(); await page.locator('#menu').click();
-    await page.locator('#sessions button').nth(1).click(); await page.locator('#plan-summary').filter({hasText:'No plan yet.'}).waitFor();
-    await page.locator('#menu').click(); await page.locator('#sessions button').first().click();
+    await page.locator('#sessions .session-select').nth(1).click(); await page.locator('#plan-summary').filter({hasText:'No plan yet.'}).waitFor();
+    await page.locator('#menu').click(); await page.locator('#sessions .session-select').first().click();
     await page.locator('#plan-summary').filter({hasText:'1 of 1 completed'}).waitFor();
     await page.screenshot({path: root + '/plan-mobile.png'});
     await page.setViewportSize({width:1280,height:860});
     const dock = (await page.locator('#plan-panel').boundingBox())!, chat = (await page.locator('#chat-column').boundingBox())!, input = (await page.locator('#composer').boundingBox())!;
     if (dock.x < chat.x + chat.width || dock.x < input.x + input.width || dock.width !== 320) throw new Error('Plan should dock beside chat and composer');
     await page.screenshot({path: root + '/plan-desktop.png'});
+  });
+  await run('tablet sidebar: resize, collapse, agent activity and delete', {width:1024,height:768}, 'light', async page => {
+    const child = {id:'child', title:'Agent-created chat', model:models[0].id, activity:'running'};
+    let listed = false, deleted = false;
+    await page.route('**/api/sessions', route => route.fulfill({json:listed && !deleted ? [child, ...sessions] : sessions}));
+    await page.route('**/api/sessions/child', route => {
+      if (route.request().method() !== 'DELETE') return route.fulfill({json:{session:child, turns:[]}});
+      deleted = true; return route.fulfill({status:204});
+    });
+    await page.goto(url + '#token=' + token);
+    await page.locator('#connection[data-state=live]').waitFor();
+    const handle = page.getByRole('separator', {name:'Resize conversations sidebar'});
+    const edge = (await handle.boundingBox())!;
+    await page.mouse.move(edge.x + edge.width / 2, edge.height / 2);
+    await page.mouse.down(); await page.mouse.move(edge.x + edge.width / 2 + 60, edge.height / 2, {steps:4}); await page.mouse.up();
+    await handle.press('ArrowRight');
+    if (await handle.getAttribute('aria-valuenow') !== '336') throw new Error('Sidebar did not resize by pointer and keyboard');
+    await page.getByRole('button', {name:'Collapse conversations'}).click();
+    await page.locator('#sidebar').waitFor({state:'hidden'});
+    await page.reload(); await page.locator('#sidebar').waitFor({state:'hidden'});
+    await page.locator('#menu').click();
+    if (await handle.getAttribute('aria-valuenow') !== '336') throw new Error('Sidebar width was not retained');
+    listed = true;
+    const row = page.locator('.session-row').filter({hasText:child.title});
+    await row.locator('.session-dot[data-state=running]').waitFor();
+    const remove = row.getByRole('button', {name:'Delete ' + child.title});
+    if (await remove.isEnabled()) throw new Error('Running session can be deleted');
+    child.activity = 'idle'; await row.locator('.session-dot[data-state=idle]').waitFor();
+    await row.locator('.session-select').click();
+    await page.locator('#connection[data-state=live]').waitFor();
+    page.once('dialog', dialog => dialog.dismiss()); await remove.click();
+    if (deleted) throw new Error('Cancelled deletion still ran');
+    page.once('dialog', dialog => dialog.accept()); await remove.click();
+    await row.waitFor({state:'detached'});
+    await page.locator('#title').filter({hasText:sessions[0].title}).waitFor();
   });
   await run('link previews: opt-in settings and cached thumbnail', {width:1280,height:860}, 'light', async page => {
     await page.goto(url + '#token=' + token);

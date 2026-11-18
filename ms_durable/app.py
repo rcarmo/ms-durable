@@ -169,7 +169,7 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
 
     @app.get("/api/sessions", dependencies=[Depends(auth)])
     async def sessions():
-        return await app.state.store.rows("SELECT * FROM sessions ORDER BY created_at DESC")
+        return await app.state.store.list_sessions()
 
     @app.post("/api/sessions", dependencies=[Depends(auth)])
     async def new_session(value: SessionInput):
@@ -177,6 +177,16 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
             return await app.state.store.create_session(value.title, value.model, value.handle)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from None
+
+    @app.delete("/api/sessions/{sid}", status_code=204, dependencies=[Depends(auth)])
+    async def delete_session(sid: str):
+        try:
+            await app.state.runtime.delete_session(sid)
+        except KeyError:
+            raise HTTPException(404, "Unknown session") from None
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        return Response(status_code=204)
 
     @app.post("/api/sessions/{sid}/title", dependencies=[Depends(auth)])
     async def rename_session(sid: str, value: RenameInput):
@@ -388,6 +398,8 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
                     cursor = item["seq"]
                     yield f"id: {cursor}\ndata: {json.dumps(item)}\n\n"
                 if not batch:
+                    if not await app.state.store.one("SELECT 1 FROM sessions WHERE id=?", (sid,)):
+                        break
                     yield ": keepalive\n\n"
                     await asyncio.sleep(0.5)
 

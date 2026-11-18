@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from copilot import AgentMessageSource, CopilotClient, RuntimeConnection
@@ -83,6 +84,8 @@ class Runtime:
         self.model_error = None
         self.capi_available = True
         self.guard = asyncio.Lock()
+        self.deleting = set()
+        self.session_calls = {}
         self.aborting = set()
         self.quarantined = set()
         self.abort_epochs = {}
@@ -181,8 +184,12 @@ class Runtime:
             self.workers[sid] = asyncio.create_task(self.work(sid))
 
     async def enqueue(self, sid, prompt, request_id, kind="prompt", **options):
-        if self.stopping or sid in self.aborting or sid in self.quarantined:
+        if self.stopping or sid in self.aborting or sid in self.quarantined or sid in self.deleting:
             raise ValueError("Session is stopping or requires recovery")
+        async with self.session_call(sid):
+            return await self._enqueue(sid, prompt, request_id, kind, **options)
+
+    async def _enqueue(self, sid, prompt, request_id, kind, **options):
         epoch = self.abort_epochs.get(sid, 0)
         turn = await self.store.submit(sid, prompt, request_id, kind=kind, **options)
         if epoch != self.abort_epochs.get(sid, 0):
@@ -196,20 +203,69 @@ class Runtime:
     async def enqueue_compaction(self, sid, instructions, request_id):
         return await self.enqueue(sid, instructions, request_id, kind="compact")
 
-    async def metadata(self, sid):
-        await self.store.session(sid)
-        session = await self.session(sid)
-        return {
-            "session": wire(await session.rpc.metadata.snapshot()),
-            "context": wire(
-                await session.rpc.metadata.context_info(
-                    MetadataContextInfoRequest(
-                        output_token_limit=0, prompt_token_limit=0, resolve_output_token_limit=False
-                    )
+    async def delete_session(self, sid):
+        worker = self.workers.get(sid)
+        if (
+            sid in self.deleting
+            or sid in self.aborting
+            or sid in self.creating
+            or sid in self.session_calls
+            or (worker and not worker.done())
+        ):
+            raise ValueError("Session is busy; stop or finish its work before deleting it")
+        self.deleting.add(sid)
+        try:
+            await self.store.session(sid)
+            if await self.store.one(
+                "SELECT 1 FROM turns WHERE session_id=? AND status IN ('queued','running')", (sid,)
+            ):
+                raise ValueError(
+                    "Stop or finish queued and running work before deleting this session"
                 )
-            ),
-            "attribution": wire(await session.rpc.metadata.get_context_attribution()),
-        }
+            if session := self.sessions.pop(sid, None):
+                try:
+                    await session.disconnect()
+                except BaseException:
+                    self.sessions[sid] = session
+                    raise
+            # The native session uses SQLiteSessionFS, not the SDK's default disk store.
+            await self.store.delete_session(sid)
+            self.workers.pop(sid, None)
+            self.wakeups.pop(sid, None)
+            self.abort_epochs.pop(sid, None)
+            self.quarantined.discard(sid)
+            self.session_approvals = {key for key in self.session_approvals if key[0] != sid}
+        finally:
+            self.deleting.discard(sid)
+
+    @asynccontextmanager
+    async def session_call(self, sid):
+        if sid in self.deleting:
+            raise KeyError("Unknown session")
+        self.session_calls[sid] = self.session_calls.get(sid, 0) + 1
+        try:
+            yield
+        finally:
+            self.session_calls[sid] -= 1
+            if not self.session_calls[sid]:
+                self.session_calls.pop(sid)
+
+    async def metadata(self, sid):
+        async with self.session_call(sid):
+            session = await self.session(sid)
+            return {
+                "session": wire(await session.rpc.metadata.snapshot()),
+                "context": wire(
+                    await session.rpc.metadata.context_info(
+                        MetadataContextInfoRequest(
+                            output_token_limit=0,
+                            prompt_token_limit=0,
+                            resolve_output_token_limit=False,
+                        )
+                    )
+                ),
+                "attribution": wire(await session.rpc.metadata.get_context_attribution()),
+            }
 
     def redact(self, value):
         if isinstance(value, str):
@@ -468,6 +524,10 @@ class Runtime:
         ]
 
     async def change_model(self, sid, model, deferred=False):
+        async with self.session_call(sid):
+            return await self._change_model(sid, model, deferred)
+
+    async def _change_model(self, sid, model, deferred):
         await self.store.session(sid)
         available = {m.get("id") for m in self.models}
         if available and model not in available:
@@ -832,6 +892,8 @@ class Runtime:
 
     async def abort(self, sid):
         await self.store.session(sid)
+        if sid in self.deleting:
+            raise KeyError("Unknown session")
         self.abort_epochs[sid] = self.abort_epochs.get(sid, 0) + 1
         self.aborting.add(sid)
         worker = self.workers.get(sid)

@@ -21,7 +21,13 @@ button:hover:not(:disabled){background:var(--hover)}button:disabled{opacity:.4;c
 [hidden]{display:none!important}
 .muted{color:var(--muted)}code,pre{font:.84rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
-.shell{display:grid;grid-template-columns:260px minmax(0,1fr);height:100dvh}
+.shell{display:grid;grid-template-columns:clamp(200px,var(--sidebar-width,260px),45vw) minmax(0,1fr);height:100dvh}
+@media(min-width:721px){.shell.sidebar-collapsed{grid-template-columns:minmax(0,1fr)}.sidebar-collapsed #sidebar{display:none}}
+#sidebar{position:relative;min-width:0}
+#sidebar-resize{position:absolute;inset:0 -6px 0 auto;width:12px;z-index:2;cursor:col-resize;touch-action:none}
+#sidebar-resize:hover,#sidebar-resize:focus-visible{background:var(--border)}
+@media(max-width:720px){#sidebar{position:fixed}#sidebar-resize{display:none}}
+@media(pointer:coarse){#sidebar-resize{inset-inline-end:-10px;width:20px}}
 aside{background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
 aside>header{display:flex;align-items:center;justify-content:space-between;padding:.8rem .8rem .5rem 1rem}
 #sessions{flex:1;overflow:auto;padding:.2rem .5rem;min-height:0}
@@ -31,6 +37,14 @@ aside>header{display:flex;align-items:center;justify-content:space-between;paddi
 #sessions button[aria-current=true]{background:var(--selected)}
 #sessions button[aria-current=true] span{font-weight:600}
 #sessions .empty{color:var(--muted);font-size:.85rem;padding:.5rem .6rem}
+.session-row{display:flex;align-items:center;gap:4px}
+#sessions .session-select{min-width:0;flex:1;display:grid;grid-template-columns:8px minmax(0,1fr);column-gap:8px;align-items:center}
+.session-row small{grid-column:2}
+.session-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);opacity:.45}
+.session-dot[data-state=running]{background:var(--ok);opacity:1}
+.session-dot[data-state=queued]{background:var(--warn);opacity:1}
+#sessions .session-delete{width:auto;min-width:32px;text-align:center;padding-inline:.5rem}
+@media(pointer:coarse){#sessions .session-delete{min-width:44px}}
 aside>footer{border-top:1px solid var(--border);padding:.5rem;display:flex;align-items:center;gap:.4rem}
 #connection{display:flex;align-items:center;gap:.45rem;font-size:.78rem;color:var(--muted);flex:1;padding-left:.4rem;min-width:0}
 #connection::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}
@@ -39,7 +53,7 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relati
 .topbar{display:flex;align-items:center;gap:.5rem;padding:.6rem 1rem;border-bottom:1px solid var(--border);min-height:52px}
 #title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #context-button{font-size:12px;color:var(--muted)}
-#menu{display:none}
+#menu{display:inline-flex}
 #notice{display:flex;gap:8px;align-items:flex-start;margin:8px 16px 0;padding:8px 12px;background:var(--panel);font-size:14px}
 #notice p{flex:1;overflow-wrap:anywhere;padding-top:.15rem}
 #transcript{flex:1;overflow:auto;padding:1.5rem 1rem 1rem;overflow-anchor:none}
@@ -194,8 +208,9 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 </div>
 <div class="shell">
 <aside id="sidebar" aria-label="Conversations">
-  <header><h1>Chat</h1><button id="new" type="button" class="iconbtn" aria-label="New conversation" title="New conversation"><svg class="icon"><use href="#i-new"/></svg></button></header>
+  <header><h1>Chat</h1><div><button id="new" type="button" class="iconbtn" aria-label="New conversation" title="New conversation"><svg class="icon"><use href="#i-new"/></svg></button><button id="sidebar-close" type="button" class="iconbtn" aria-label="Collapse conversations" title="Collapse conversations"><svg class="icon"><use href="#i-close"/></svg></button></div></header>
   <nav id="sessions" aria-label="Conversations"></nav>
+  <div id="sidebar-resize" role="separator" aria-label="Resize conversations sidebar" aria-orientation="vertical" aria-controls="sidebar" tabindex="0"></div>
   <footer><span id="connection" role="status" data-state="down">Disconnected</span><button id="open-settings" type="button" class="iconbtn" aria-label="Settings" title="Settings"><svg class="icon"><use href="#i-settings"/></svg></button></footer>
 </aside>
 <div id="scrim"></div>
@@ -301,7 +316,8 @@ let sending = false, pending = null, sessions = [];
 const imageDrafts = new Map(), imageURLs = new Set();
 let timelineAfter = 0;
 const drafts = new Map(), turnNodes = new Map(), sessionNodes = new Map();
-const recentSessions = new Map();
+const recentSessions = new Map(), deletingSessions = new Set();
+let catalogueVersion = 0;
 const DONE = new Set(['completed','complete','failed','error','cancelled','canceled','stopped','interrupted','succeeded','done']);
 const STATES = {queued:'Queued', running:'Working', cancelled:'Stopped', canceled:'Stopped', stopped:'Stopped', interrupted:'Interrupted by a restart · not resent', error:'Failed', failed:'Failed'};
 function node(tag, className, text) {
@@ -440,27 +456,70 @@ function showSession(ctx, session) {
   ctx.session = session;
   text($('title'), sessionLabel(session)); document.title = sessionLabel(session) + ' — Chat';
   const index = sessions.findIndex(s => String(s.id) === ctx.id);
-  if (index >= 0) sessions[index] = session; else sessions.unshift(session);
+  if (index >= 0) sessions[index] = {...sessions[index], ...session}; else sessions.unshift(session);
   renderSessions();
 }
 function renderSessions() {
   const keep = new Set(), nav = $('sessions');
   sessions.forEach((s, index) => {
     const id = String(s.id); keep.add(id);
-    let b = sessionNodes.get(id);
-    if (!b) {
-      b = node('button'); b.type = 'button'; b.append(node('span'), node('small'));
-      b.onclick = () => { if (!sending && selected !== id) selectSession(id); };
-      sessionNodes.set(id, b);
+    let row = sessionNodes.get(id);
+    if (!row) {
+      row = node('div', 'session-row');
+      const button = node('button', 'session-select'), remove = node('button', 'quiet session-delete');
+      button.type = remove.type = 'button'; remove.append(icon('close'));
+      const dot = node('span', 'session-dot'); dot.setAttribute('aria-hidden', 'true');
+      button.append(dot, node('span'), node('small'));
+      button.onclick = () => { if (!sending && selected !== id) selectSession(id); };
+      remove.onclick = () => deleteSession(id);
+      row.append(button, remove); sessionNodes.set(id, row);
     }
-    text(b.firstChild, sessionLabel(s)); text(b.lastChild, [modelName(s.model), when(s.created_at)].filter(Boolean).join(' · '));
-    b.setAttribute('aria-current', String(id === selected)); b.disabled = sending;
-    const current = nav.children[index]; if (current !== b) nav.insertBefore(b, current || null);
+    const [button, remove] = row.children, [dot, title, detail] = button.children;
+    const activity = s.activity || 'idle', label = {idle:'Idle', queued:'Queued', running:'Running'}[activity];
+    dot.dataset.state = activity;
+    text(title, sessionLabel(s)); text(detail, [modelName(s.model), when(s.created_at)].filter(Boolean).join(' · '));
+    button.setAttribute('aria-description', label); button.title = label;
+    button.setAttribute('aria-current', String(id === selected)); button.disabled = sending || deletingSessions.has(id);
+    remove.title = activity === 'idle' ? 'Delete conversation' : 'Stop or finish work before deleting';
+    remove.setAttribute('aria-label', 'Delete ' + sessionLabel(s));
+    remove.disabled = button.disabled || activity !== 'idle';
+    const current = nav.children[index]; if (current !== row) nav.insertBefore(row, current || null);
   });
   for (const [id, el] of sessionNodes) if (!keep.has(id)) { el.remove(); sessionNodes.delete(id); }
   let empty = nav.querySelector('.empty');
   if (!sessions.length && !empty) nav.append(node('p', 'empty', 'No conversations yet.'));
   if (sessions.length && empty) empty.remove();
+}
+function forgetSession(id) {
+  if (selected === id) selectSession(sessions.length ? String(sessions[0].id) : null);
+  drafts.delete(id); imageDrafts.delete(id); recentSessions.delete(id);
+  if (pending?.session === id) pending = null;
+}
+async function deleteSession(id) {
+  const session = sessions.find(s => String(s.id) === id);
+  if (!session || sending || deletingSessions.has(id) || !confirm('Permanently delete “' + sessionLabel(session) + '” and its history?')) return;
+  deletingSessions.add(id); catalogueVersion++; renderSessions();
+  try {
+    await json('/api/sessions/' + encodeURIComponent(id), {method:'DELETE'});
+    sessions = sessions.filter(s => String(s.id) !== id); forgetSession(id); notice();
+  } catch (e) { notice(e.message); }
+  finally { deletingSessions.delete(id); catalogueVersion++; renderSessions(); }
+}
+async function followSessionList(controller) {
+  const {signal} = controller;
+  while (!signal.aborted) {
+    await pause(2000, signal);
+    if (signal.aborted || document.hidden) continue;
+    const version = catalogueVersion;
+    try {
+      const list = await json('/api/sessions', {signal});
+      if (signal.aborted || version !== catalogueVersion || sending || deletingSessions.size) continue;
+      const gone = sessions.filter(s => !list.some(row => row.id === s.id));
+      sessions = list;
+      for (const s of gone) forgetSession(String(s.id));
+      renderSessions();
+    } catch { /* The active conversation handles connection errors. */ }
+  }
 }
 function newTurn(id) {
   const root = node('article', 'turn'); root.dataset.turnId = id;
@@ -914,10 +973,69 @@ function detach() {
   }
   context = null;
 }
-function openSidebar(open) {
-  $('sidebar').classList.toggle('open', open); $('scrim').classList.toggle('open', open);
-  $('menu').setAttribute('aria-expanded', String(open));
+const shell = document.querySelector('.shell'), narrowSidebar = matchMedia('(max-width:720px)');
+let sidebarCollapsed = false, sidebarWidth = 260;
+try {
+  sidebarCollapsed = localStorage.getItem('ms-durable.sidebar-collapsed') === 'true';
+  sidebarWidth = Number(localStorage.getItem('ms-durable.sidebar-width')) || 260;
+} catch {}
+function sidebarIsOpen() { return narrowSidebar.matches ? $('sidebar').classList.contains('open') : !sidebarCollapsed; }
+function drawSidebar() {
+  shell.classList.toggle('sidebar-collapsed', sidebarCollapsed);
+  $('menu').setAttribute('aria-expanded', String(sidebarIsOpen()));
 }
+function openSidebar(open) {
+  if (narrowSidebar.matches) {
+    $('sidebar').classList.toggle('open', open); $('scrim').classList.toggle('open', open);
+  } else {
+    sidebarCollapsed = !open;
+    try { localStorage.setItem('ms-durable.sidebar-collapsed', String(sidebarCollapsed)); } catch {}
+  }
+  drawSidebar();
+}
+function closeSidebar() { openSidebar(false); $('menu').focus(); }
+const sidebarResize = $('sidebar-resize');
+function drawSidebarWidth(width) {
+  const max = Math.max(200, Math.floor(innerWidth * .45));
+  const current = Math.round(Math.max(200, Math.min(max, width)));
+  shell.style.setProperty('--sidebar-width', current + 'px');
+  sidebarResize.setAttribute('aria-valuemin', '200'); sidebarResize.setAttribute('aria-valuemax', String(max));
+  sidebarResize.setAttribute('aria-valuenow', String(current));
+  return current;
+}
+function saveSidebarWidth(width) {
+  sidebarWidth = drawSidebarWidth(width);
+  try { localStorage.setItem('ms-durable.sidebar-width', String(sidebarWidth)); } catch {}
+}
+let resizeDrag = null;
+sidebarResize.onpointerdown = event => {
+  if (!event.isPrimary || event.button !== 0) return;
+  event.preventDefault(); sidebarResize.focus(); sidebarResize.setPointerCapture(event.pointerId);
+  resizeDrag = {id:event.pointerId, start:event.clientX, width:$('sidebar').offsetWidth, frame:0};
+};
+sidebarResize.onpointermove = event => {
+  const drag = resizeDrag;
+  if (!drag || drag.id !== event.pointerId) return;
+  drag.next = drag.width + event.clientX - drag.start;
+  if (!drag.frame) drag.frame = requestAnimationFrame(() => { drag.frame = 0; drawSidebarWidth(drag.next); });
+};
+sidebarResize.onlostpointercapture = () => {
+  if (!resizeDrag) return;
+  cancelAnimationFrame(resizeDrag.frame);
+  if (resizeDrag.next !== undefined) saveSidebarWidth(resizeDrag.next);
+  resizeDrag = null;
+};
+sidebarResize.onkeydown = event => {
+  const current = Number(sidebarResize.getAttribute('aria-valuenow'));
+  const width = {ArrowLeft:current - 16, ArrowRight:current + 16, Home:200, End:innerWidth}[event.key];
+  if (width === undefined) return;
+  event.preventDefault(); saveSidebarWidth(width);
+};
+narrowSidebar.addEventListener('change', () => {
+  $('sidebar').classList.remove('open'); $('scrim').classList.remove('open'); drawSidebar();
+});
+window.addEventListener('resize', () => { if (!resizeDrag) drawSidebarWidth(sidebarWidth); });
+drawSidebar(); drawSidebarWidth(sidebarWidth);
 function selectSession(id) {
   drafts.set(selected || 'new', $('prompt').value);
   for (const url of imageURLs) URL.revokeObjectURL(url); imageURLs.clear();
@@ -926,7 +1044,7 @@ function selectSession(id) {
   $('approvals').replaceChildren(); $('approvals').dataset.ids = '';
   $('prompt').value = drafts.get(id || 'new') || ''; grow(); drawDraftImages(); $('slash-menu').hidden = true;
   $('turns').replaceChildren(); turnNodes.clear();
-  openSidebar(false);
+  if (narrowSidebar.matches) openSidebar(false);
   const row = sessions.find(s => String(s.id) === id);
   text($('title'), id ? sessionLabel(row) : 'New conversation'); document.title = 'Chat';
   text($('context-label'), '');
@@ -953,7 +1071,7 @@ async function connect() {
       if (selected && sessions.some(s => String(s.id) === selected)) selectSession(selected);
       else if (!selected && sessions.length) selectSession(String(sessions[0].id));
       else selectSession(null);
-      controls(); return;
+      controls(); followSessionList(controller); return;
     } catch (e) {
       if (controller.signal.aborted || !$('auth').hidden) { status('Access token required', 'down'); return; }
       status('Backend unavailable', 'down'); notice(e.message + ' Retrying automatically.');
@@ -1080,8 +1198,11 @@ $('timeline-button').onclick = () => { $('settings-dialog').close(); timelineAft
 $('timeline-more').onclick = loadTimeline;
 $('timeline-dialog').addEventListener('close', () => $('open-settings').focus());
 $('notice-close').onclick = () => notice();
-$('menu').onclick = () => openSidebar(!$('sidebar').classList.contains('open'));
-$('scrim').onclick = () => openSidebar(false);
+$('menu').onclick = () => {
+  if (sidebarIsOpen()) closeSidebar();
+  else { openSidebar(true); if (narrowSidebar.matches) $('sidebar-close').focus(); }
+};
+$('sidebar-close').onclick = $('scrim').onclick = closeSidebar;
 $('new').onclick = () => { if (!sending) selectSession(null); };
 $('jump').onclick = bottom;
 $('transcript').addEventListener('scroll', () => { if (nearBottom()) $('jump').hidden = true; }, {passive:true});
@@ -1102,7 +1223,7 @@ $('prompt').oninput = () => { drafts.set(selected || 'new', $('prompt').value); 
 $('prompt').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); $('composer').requestSubmit(); } };
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
-  if ($('sidebar').classList.contains('open')) openSidebar(false);
+  if ($('sidebar').classList.contains('open')) closeSidebar();
   else if (!$('plan-panel').hidden) { event.preventDefault(); setPlanOpen(false, true); }
 });
 $('composer').onsubmit = async event => {
@@ -1119,7 +1240,7 @@ $('composer').onsubmit = async event => {
       const handle = $('agent-name').value.trim() || undefined;
       const s = await json('/api/sessions', {method:'POST', body:{model:$('model').value, title, handle}});
       imageDrafts.set(String(s.id), images); $('agent-name').value = '';
-      sessions.unshift(s); selectSession(String(s.id)); $('prompt').value = prompt;
+      catalogueVersion++; sessions.unshift(s); selectSession(String(s.id)); $('prompt').value = prompt;
     }
     const id = selected;
     if (!pending || pending.session !== id || pending.prompt !== prompt || pending.images !== images && (pending.images.length || images.length)) pending = {session:id, prompt, images, request_id:requestId()};
