@@ -37,17 +37,18 @@ aside>header{display:flex;align-items:center;justify-content:space-between;paddi
 #sessions button[aria-current=true]{background:var(--selected)}
 #sessions button[aria-current=true] span{font-weight:600}
 #sessions .empty{color:var(--muted);font-size:.85rem;padding:.5rem .6rem}
-.session-row{display:flex;align-items:center;gap:4px}
-#sessions .session-select{min-width:0;flex:1;display:grid;grid-template-columns:8px minmax(0,1fr);column-gap:8px;align-items:center}
+.session-row{position:relative}
+#sessions .session-select{min-width:0;display:grid;grid-template-columns:8px minmax(0,1fr);column-gap:8px;align-items:center;padding-inline-end:36px}
 .session-row small{grid-column:2}
 .session-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);opacity:.45}
 .session-dot[data-state=running]{background:var(--ok);opacity:1}
 .session-dot[data-state=queued]{background:var(--warn);opacity:1}
-#sessions .session-delete{display:grid;place-items:center;flex:none;width:32px;height:32px;padding:0;border-color:transparent;color:var(--muted);background:transparent}
-#sessions .session-delete:hover:not(:disabled),#sessions .session-delete:focus-visible{background:var(--hover);color:var(--danger)}
+#sessions .session-delete{position:absolute;inset-block-start:2px;inset-inline-end:2px;display:grid;place-items:center;width:28px;height:28px;padding:0;margin:0;color:var(--muted);background:transparent}
+.session-delete .icon{width:14px;height:14px}
+#sessions .session-delete:hover:not(:disabled),#sessions .session-delete:focus-visible{background:var(--hover);color:var(--text)}
 #sessions .session-delete:disabled{visibility:hidden}
 @media(hover:hover) and (pointer:fine){.session-row:not(:hover):not(:focus-within) .session-delete{opacity:0}}
-@media(pointer:coarse){#sessions .session-delete{width:44px;height:44px}}
+@media(pointer:coarse){#sessions .session-delete{width:44px;height:44px}#sessions .session-select{min-height:48px;padding-inline-end:50px}}
 .delete-confirm{color:var(--danger);border-color:currentColor}
 aside>footer{border-top:1px solid var(--border);padding:.5rem;display:flex;align-items:center;gap:.4rem}
 #connection{display:flex;align-items:center;gap:.45rem;font-size:.78rem;color:var(--muted);flex:1;padding-left:.4rem;min-width:0}
@@ -180,7 +181,6 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
 <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></symbol>
 <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
-<symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></symbol>
 <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol>
 <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
 <symbol id="i-reference" viewBox="0 0 24 24"><path d="M9 8H7a4 4 0 1 0 0 8h2m6-8h2a4 4 0 1 1 0 8h-2M9 12h6"/></symbol>
@@ -481,7 +481,7 @@ function renderSessions() {
     if (!row) {
       row = node('div', 'session-row');
       const button = node('button', 'session-select'), remove = node('button', 'iconbtn session-delete');
-      button.type = remove.type = 'button'; remove.append(icon('trash'));
+      button.type = remove.type = 'button'; remove.append(icon('close'));
       const dot = node('span', 'session-dot'); dot.setAttribute('aria-hidden', 'true');
       button.append(dot, node('span'), node('small'));
       button.onclick = () => { if (!sending && selected !== id) selectSession(id); };

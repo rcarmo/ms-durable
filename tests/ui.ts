@@ -308,6 +308,11 @@ try {
     if (await remove.evaluate(el => getComputedStyle(el).opacity) !== '0') throw new Error('Delete icon should be quiet until hover or focus');
     await remove.focus();
     if (await remove.evaluate(el => getComputedStyle(el).opacity) !== '1') throw new Error('Keyboard focus did not reveal delete');
+    const entry = (await row.locator('.session-select').boundingBox())!, cross = (await remove.boundingBox())!;
+    if (Math.abs(cross.y - entry.y - 2) > 1 || Math.abs(entry.x + entry.width - cross.x - cross.width - 2) > 1) {
+      throw new Error('Delete control is not in the top-right corner of the entry');
+    }
+    if (await remove.locator('use[href="#i-close"]').count() !== 1) throw new Error('Delete control should use the plain close icon');
     await remove.press('Enter');
     const confirm = page.getByRole('dialog', {name:'Delete conversation?'});
     await confirm.getByText(child.title, {exact:true}).waitFor();
