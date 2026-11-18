@@ -356,7 +356,7 @@ try {
     if (download.suggestedFilename() !== 'report.txt' || await download.failure()) throw new Error('Shared file download failed');
   });
   await run('timeline follows latest without interrupting scrollback', {width:1024,height:660}, 'light', async page => {
-    const history = Array.from({length:35}, (_, i) => ({id:'scroll-' + i, status:'done', prompt:'Question ' + i, answer:'An earlier answer.'}));
+    const history: any[] = Array.from({length:35}, (_, i) => ({id:'scroll-' + i, status:'done', prompt:'Question ' + i, answer:'An earlier answer.'}));
     const live = (id: string, seq: number) => ({seq,type:'turn.updated',data:{id,status:'done',prompt:'New message',answer:'New answer'}});
     let emit!: (event: unknown) => void;
     await page.route('**/api/sessions/s1', route => route.fulfill({json:{session:sessions[0],turns:history,events:[],approvals:[]}}));
@@ -375,8 +375,10 @@ try {
       const transcript = page.locator('#transcript');
       await transcript.evaluate(el => { el.scrollTop = 500; });
       await page.locator('#jump').waitFor();
-      emit(live('live-2', 101));
-      await page.locator('#message-live-2').waitFor({state:'attached'});
+      history.push({id:'live-1',status:'done',prompt:'New message',answer:'New answer'});
+      history.push({id:'live-2',status:'done',prompt:'Build passed',answer:'',kind:'chat_reply',sender_id:'s2',sender_handle:'build'});
+      emit({seq:101, type:'app.chat_reply', turn_id:'live-2', data:{}});
+      await page.locator('#message-live-2').getByText('Reply from @build', {exact:true}).waitFor({state:'attached'});
       if (await transcript.evaluate(el => Math.abs(el.scrollTop - 500) > 2)) throw new Error('Live update interrupted scrollback');
       await page.locator('#jump').click(); await atEnd();
       await page.setViewportSize({width:1024,height:580}); await atEnd();

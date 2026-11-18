@@ -327,8 +327,17 @@ CREATE TABLE IF NOT EXISTS sdk_files(
                 raise KeyError("Unknown session")
             insert = await db.execute(
                 "INSERT OR IGNORE INTO turns(id,session_id,request_id,prompt,status,created_at,kind,sender_id) "
-                "VALUES(?,?,?,?, 'queued',?,?,?)",
-                (uid(), sid, request_id, prompt, time.time(), kind, sender_id),
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    uid(),
+                    sid,
+                    request_id,
+                    prompt,
+                    "done" if kind == "chat_reply" else "queued",
+                    time.time(),
+                    kind,
+                    sender_id,
+                ),
             )
             cursor = await db.execute(
                 "SELECT * FROM turns WHERE session_id=? AND request_id=?", (sid, request_id)
@@ -357,7 +366,12 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             if insert.rowcount:
                 await db.execute(
                     "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
-                    (sid, tid, "app.turn_queued", "{}"),
+                    (
+                        sid,
+                        tid,
+                        "app.chat_reply" if kind == "chat_reply" else "app.turn_queued",
+                        "{}",
+                    ),
                 )
                 if outgoing:
                     source_turn, destination, message = outgoing

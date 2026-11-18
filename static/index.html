@@ -785,7 +785,7 @@ function markdown(el, source) {
   addLinkPreviews(el);
 }
 const toolLabels = {
-  plan:'Working on the plan', chat:'Sending a message', context:'Checking context usage', compact:'Compacting context',
+  plan:'Working on the plan', chat:'Sending a message', reply_chat:'Replying to a message', context:'Checking context usage', compact:'Compacting context',
   list_models:'Listing models', list_sessions:'Listing sessions', observe_session:'Inspecting the session timeline',
   attach_file:'Sharing a file', read_attachment:'Reading an attachment', create_session:'Creating a session', set_model:'Changing the model',
   context_status:'Checking context usage', compact_session:'Compacting context', send_message:'Sending a message',
@@ -882,7 +882,7 @@ function render(ctx) {
       v.state.hidden = true; text(v.error, active ? '' : (turn.error ? format(turn.error) : ''));
     } else {
       v.note.hidden = true;
-      text(v.promptMeta.firstChild, turn.sender_id ? (turn.sender_handle ? '@' + turn.sender_handle : 'Agent') : 'You');
+      text(v.promptMeta.firstChild, turn.sender_id ? (turn.kind === 'chat_reply' ? 'Reply from ' : '') + (turn.sender_handle ? '@' + turn.sender_handle : 'Agent') : 'You');
       text(v.answerMeta.firstChild, ctx.session?.handle ? '@' + ctx.session.handle : sessionName(ctx.session));
       const raw = turn.prompt || '';
       if (v.prompt.dataset.raw !== raw) { v.prompt.dataset.raw = raw; markdown(v.prompt, raw); }
@@ -1012,7 +1012,7 @@ async function stream(ctx) {
           if (dataLines.length) {
             const event = JSON.parse(dataLines.join('\n')); applyEvent(ctx, event);
             if (!ctx.frame) ctx.frame = requestAnimationFrame(() => { ctx.frame = 0; render(ctx); });
-            if (['app.turn_queued','app.turn_started','app.turn_settled','app.file_shared','app.approval','app.session_renamed'].includes(event.type)) scheduleSnapshot(ctx);
+            if (['app.chat_reply','app.turn_queued','app.turn_started','app.turn_settled','app.file_shared','app.approval','app.session_renamed'].includes(event.type)) scheduleSnapshot(ctx);
             backoff = 1000;
           }
           dataLines = [];

@@ -399,8 +399,30 @@ async def test_named_chat_is_deduplicated_and_one_hop(store, tmp_path, monkeypat
     with pytest.raises(ValueError, match="another app session"):
         await send(alice, "@alice")
     runtime.active[bob] = message["id"]
-    with pytest.raises(ValueError, match="cannot send"):
+    with pytest.raises(ValueError, match="use reply_chat"):
         await send(bob, "@alice")
+    reply = next(t for t in runtime.tools(bob) if t.name == "reply_chat")
+    args = SimpleNamespace(arguments={"prompt": "Build passed"})
+    with pytest.raises(ValueError, match="active inter-session"):
+        await reply.handler(args)
+    await store.execute("UPDATE turns SET status='running' WHERE id=?", (message["id"],))
+    answer = json.loads((await reply.handler(args)).text_result_for_llm)
+    assert json.loads((await reply.handler(args)).text_result_for_llm)["id"] == answer["id"]
+    received = (await store.snapshot(alice))["turns"][-1]
+    assert (
+        received["kind"],
+        received["status"],
+        received["prompt"],
+        received["sender_handle"],
+    ) == (
+        "chat_reply",
+        "done",
+        "Build passed",
+        "bob",
+    )
+    events = await store.events(alice)
+    assert [e["type"] for e in events if e["turn_id"] == answer["id"]] == ["app.chat_reply"]
+    assert len((await store.snapshot(bob))["sent_messages"]) == 1
 
 
 async def test_model_can_inspect_timeline_and_attachments(store, tmp_path):

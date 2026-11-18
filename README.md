@@ -54,7 +54,7 @@ The UI has independent conversations, streaming text, expandable tool activity, 
 - **Plan:** open the checklist from the chat header. It docks to the right of chat on desktop and stacks above it on narrow screens. The agent’s changes appear live; each conversation keeps its own plan in SQLite.
 - **Message references:** use the **Copy** icon for text. Select the **Reference** icon or the timestamp to insert a reference into the composer. The composer and transcript show a short turn ID, such as `#e1b4c29a` (seven ID characters plus `a` for answer or `u` for user). Stored references retain the full chat ID, turn ID and role. Select the reference to jump to the message in the same chat. Answers written before timestamp support have no recorded completion time.
 - **Named sessions:** use the pencil in the header to rename a session and update its `@name` without changing its ID. When Luna is available, the dialog summarises up to 20 recent settled turns. Enter an optional unique `@name` before the first send. Names are case-insensitive.
-- **Multiplayer**: Agents can send to named sessions or raw session IDs using a `chat` tool. The sender’s timeline shows the message and its destination. The receiving timeline shows the message with the sender’s name. No reply is sent back automatically. This is for those of you who like having sub-agents or just burn up tokens.
+- **Multiplayer**: Agents can send to named sessions or raw session IDs using a `chat` tool. The sender’s timeline shows the message and its destination. The receiving timeline shows the message with the sender’s name. An agent can use `reply_chat` to post its result back to the original sender. The reply appears in both timelines without starting another agent turn. This is for those of you who like having sub-agents or just burn up tokens.
 
 Application tools are visible to every application session:
 
@@ -62,7 +62,7 @@ Application tools are visible to every application session:
 - `plan`: read (`read`), replace (`update`) or atomically edit (`patch`) the current conversation’s plan. Patches use 1-based indices and support `add`, `update` and `remove`. At most one item can be `in_progress`.
 - `read_attachment`: inspect a stored attachment by chat ID (or `@handle`), turn ID and ordinal. The SDK returns raster images as image results and SVG as bounded source text.
 - `attach_file`: share a workspace file on the current turn without an approval prompt. Each turn can share up to five files, with a combined limit of 256 MiB. A single file can use the full limit. PNG, JPEG, GIF and WebP can appear inline when they are at most 1 MiB, 4096 pixels per side and 8 megapixels. The app copies files into SQLite in chunks. The authenticated `/media/shared/` route streams downloads, supports single HTTP byte ranges, and does not load the complete file into memory. Allow space for both the stored copy and SQLite's WAL during ingestion.
-- `create_session`, `chat`: independent sessions and deduplicated one-hop delivery. A turn received from another agent cannot use this tool to send again, because I remember Bedlam 3.
+- `create_session`, `chat`: independent sessions and deduplicated one-hop delivery. An agent handling an incoming request can use `reply_chat` once to respond to its sender; it cannot start another `chat` request from that turn.
 - `list_models`, `set_model`: model discovery and selection.
 - `context`, `compact`: native context inspection and queued compaction.
 
