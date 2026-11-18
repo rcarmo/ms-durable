@@ -120,15 +120,17 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 .message-images{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
 .message-images img{display:block;max-width:min(100%,360px);max-height:300px;object-fit:contain}
 .message-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px;color:var(--muted);font-size:12px;margin:2px 0}
-.message-meta button{padding:1px 5px}.message-meta time{margin-right:4px}
+.message-meta button{padding:3px 5px}.message-meta .icon{width:16px;height:16px}.message-time{color:inherit}
 .message-ref{font-size:12px;overflow-wrap:anywhere;color:var(--accent)}
 .turn:target,.turn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 #timeline-list{padding:0;list-style:none}#timeline-list details{width:100%;min-width:0}#timeline-list pre{max-height:180px;overflow:auto}#timeline-list summary{overflow-wrap:anywhere;cursor:pointer}
 @media(prefers-color-scheme:light){:root[data-theme=dark]{--bg:#1f1f1f;--panel:#292929;--raised:#333;--hover:#383838;--selected:#414141;--border:#525252;--text:#fff;--muted:#c2c2c2;--accent:#75b6e7;--accent-ink:#102331;--danger:#ff99a4;--ok:#9ad29a;--warn:#f2c276;color-scheme:dark}}
 @media(prefers-color-scheme:dark){:root[data-theme=light]{--bg:#fff;--panel:#f5f5f5;--raised:#fff;--hover:#ebebeb;--selected:#e0e0e0;--border:#d1d1d1;--text:#242424;--muted:#616161;--accent:#0f6cbd;--accent-ink:#fff;--danger:#b10e1c;--ok:#107c10;--warn:#835b00;color-scheme:light}}
 .tool-syntax .key{color:var(--accent)}.tool-syntax .literal{color:var(--muted)}
-#conversation-body{position:relative;display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
-#plan-panel{position:absolute;inset:8px 8px 8px auto;z-index:3;display:flex;flex-direction:column;width:min(352px,calc(100% - 16px));background:var(--raised);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px #0003}
+#conversation-body{display:grid;grid-template-columns:minmax(0,1fr) auto;flex:1;min-height:0;min-width:0}
+#chat-column{display:flex;flex-direction:column;min-width:0;min-height:0}
+@media(max-width:900px){#conversation-body{display:flex;flex-direction:column}#chat-column{flex:1}#plan-panel:not([hidden]){order:-1;width:100%;max-height:34dvh;border-inline-start:0;border-bottom:1px solid var(--border)}}
+#plan-panel{display:flex;flex-direction:column;width:320px;min-height:0;background:var(--panel);border-inline-start:1px solid var(--border)}
 #plan-panel header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px 8px 16px;border-bottom:1px solid var(--border)}
 #plan-content{overflow:auto;overscroll-behavior:contain;padding:12px 16px}
 #plan-items{list-style:none;padding:0;margin:0}#plan-items li{display:grid;grid-template-columns:16px minmax(0,1fr);gap:8px;padding:8px 0;overflow-wrap:anywhere}#plan-items li+li{border-top:1px solid var(--border)}
@@ -136,6 +138,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 #plan-items [data-status=in_progress] .plan-step{font-weight:600}#plan-items [data-status=in_progress] svg{color:var(--accent)}
 .plan-status{display:block;color:var(--muted);font-size:12px}.plan-description{margin-bottom:8px;overflow-wrap:anywhere}
 #plan-toggle[aria-expanded=true]{background:var(--selected)}
+.tool-view{display:flex;gap:4px;margin:6px 0}.tool-view button{font-size:12px;padding:2px 8px}.tool-view button[aria-pressed=true]{background:var(--selected)}
 </style>
 </head>
 <body>
@@ -148,6 +151,8 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></symbol>
 <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
 <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+<symbol id="i-reference" viewBox="0 0 24 24"><path d="M10 14l4-4m-6 7-1 1a3.5 3.5 0 0 1-5-5l4-4a3.5 3.5 0 0 1 5 0m5-2 1-1a3.5 3.5 0 0 1 5 5l-4 4a3.5 3.5 0 0 1-5 0" transform="translate(1 1) scale(.92)"/></symbol>
 <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></symbol>
 <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
 <symbol id="i-x-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></symbol>
@@ -185,24 +190,15 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
     <button id="menu" type="button" class="iconbtn" aria-label="Conversations" aria-expanded="false" aria-controls="sidebar"><svg class="icon"><use href="#i-menu"/></svg></button>
     <h2 id="title">New conversation</h2>
     <button id="plan-toggle" type="button" aria-expanded="false" aria-controls="plan-panel" hidden>Plan</button>
-    <button id="timeline-button" type="button" title="Inspect session events" hidden>Timeline</button>
     <button id="context-button" type="button" aria-label="Context usage" title="Context usage and compaction" hidden><svg class="icon"><use href="#i-gauge"/></svg><span id="context-label"></span></button>
   </header>
   <div id="notice" role="alert" hidden><svg class="icon" style="color:var(--warn)"><use href="#i-alert"/></svg><p></p><button type="button" class="iconbtn" aria-label="Dismiss" id="notice-close"><svg class="icon"><use href="#i-close"/></svg></button></div>
   <div id="conversation-body">
+  <div id="chat-column">
   <section id="transcript" aria-label="Conversation" aria-live="polite">
     <div class="content" id="turns"></div>
     <div id="empty"><h2>Start a conversation</h2><p>Type a message below.</p></div>
   </section>
-  <section id="plan-panel" role="region" aria-labelledby="plan-heading" hidden>
-    <header><h2 id="plan-heading">Plan</h2><button id="plan-close" type="button" class="iconbtn" aria-label="Close plan"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header>
-    <div id="plan-content" tabindex="0" aria-label="Plan checklist">
-      <p id="plan-summary" class="muted" role="status">No plan yet.</p>
-      <p id="plan-explanation" class="plan-description" hidden></p>
-      <ol id="plan-items"></ol>
-    </div>
-  </section>
-  </div>
   <footer class="composer">
   <button id="jump" type="button" aria-label="Jump to latest" title="Jump to latest" hidden><svg class="icon"><use href="#i-down"/></svg></button>
     <section id="approvals" aria-label="Permission requests"></section>
@@ -222,6 +218,16 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
       </div>
     </form>
   </footer>
+  </div>
+  <section id="plan-panel" role="region" aria-labelledby="plan-heading" hidden>
+    <header><h2 id="plan-heading">Plan</h2><button id="plan-close" type="button" class="iconbtn" aria-label="Close plan"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div id="plan-content" tabindex="0" aria-label="Plan checklist">
+      <p id="plan-summary" class="muted" role="status">No plan yet.</p>
+      <p id="plan-explanation" class="plan-description" hidden></p>
+      <ol id="plan-items"></ol>
+    </div>
+  </section>
+  </div>
 </main>
 </div>
 <dialog id="settings-dialog" aria-labelledby="settings-title">
@@ -229,6 +235,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
   <div class="body">
     <label>Appearance <select id="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
     <div id="config" class="muted">Not connected.</div>
+    <h3 id="diagnostics" hidden>Diagnostics</h3><button id="timeline-button" class="quiet" type="button" hidden>Session event log</button>
     <div class="dialog-actions"><button id="change-token" type="button" class="quiet"><svg class="icon"><use href="#i-key"/></svg>Change access token</button></div>
   </div>
 </dialog>
@@ -242,7 +249,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
   </div>
 </dialog>
 <dialog id="timeline-dialog" aria-labelledby="timeline-title">
-  <header><h2 id="timeline-title">Timeline</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
+  <header><h2 id="timeline-title">Session event log</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
   <div class="body"><p id="timeline-status" role="status"></p><ul id="timeline-list"></ul><button id="timeline-more" type="button" class="quiet" hidden>Load more events</button></div>
 </dialog>
 <output id="message-feedback" class="sr" aria-live="polite"></output>
@@ -306,7 +313,7 @@ function controls() {
   $('stop').hidden = !selected || !active; $('stop').disabled = sending;
   $('new').disabled = sending;
   $('context-button').hidden = !selected;
-  $('timeline-button').hidden = !selected;
+  $('timeline-button').hidden = $('diagnostics').hidden = !selected;
   $('plan-toggle').hidden = !selected;
   $('agent-field').hidden = Boolean(selected);
   $('attach').disabled = sending || draftImages().length >= 3;
@@ -454,26 +461,33 @@ $('image-input').onchange = async () => {
   } catch(e) { notice(e.message || 'Could not read the selected image.'); }
 };
 function messageMeta(id, role, content) {
-  const bar = node('div', 'message-meta'), date = node('time'); bar.append(date);
-  for (const label of ['Copy', 'Reference']) {
-    const b = node('button', '', label); b.type = 'button'; b.setAttribute('aria-label', label + ' ' + role);
-    b.onclick = async () => {
-      if (label === 'Copy') {
-        try { await navigator.clipboard.writeText(content.dataset.raw ?? content.textContent); text($('message-feedback'), 'Copied'); }
-        catch { notice('Could not access the clipboard.'); }
-      } else {
-        const field = $('prompt');
-        field.value += (field.value.trim() ? '\n' : '') + '[[message:' + selected + ':' + id + ':' + role + ']] ';
-        field.dispatchEvent(new Event('input')); field.focus(); field.setSelectionRange(field.value.length, field.value.length);
-      }
+  const bar = node('div', 'message-meta');
+  function reference() {
+    const field = $('prompt');
+    if (field.readOnly) return;
+    field.value += (field.value.trim() ? '\n' : '') + '[[message:' + selected + ':' + id + ':' + role + ']] ';
+    field.dispatchEvent(new Event('input')); field.focus(); field.setSelectionRange(field.value.length, field.value.length);
+  }
+  const timestamp = node('button', 'message-time'); timestamp.type = 'button'; timestamp.onclick = reference;
+  timestamp.append(node('time')); bar.append(timestamp);
+  for (const [label, glyph] of [['Copy', 'copy'], ['Reference', 'reference']]) {
+    const b = node('button', 'iconbtn'); b.type = 'button'; b.title = label; b.setAttribute('aria-label', label + ' ' + role);
+    b.append(icon(glyph));
+    b.onclick = label === 'Reference' ? reference : async () => {
+      try { await navigator.clipboard.writeText(content.dataset.raw ?? content.textContent); text($('message-feedback'), 'Copied'); }
+      catch { notice('Could not access the clipboard.'); }
     };
     bar.append(b);
   }
   return bar;
 }
 function stamp(bar, seconds) {
-  const t = bar.firstChild; t.hidden = !seconds;
-  if (seconds) { const date = new Date(seconds * 1000); t.dateTime = date.toISOString(); t.title = date.toLocaleString(); text(t, when(seconds)); }
+  const button = bar.firstChild, t = button.firstChild; button.hidden = !seconds;
+  if (seconds) {
+    const date = new Date(seconds * 1000), label = 'Reference message from ' + date.toLocaleString();
+    t.dateTime = date.toISOString(); text(t, when(seconds));
+    button.title = label; button.setAttribute('aria-label', label);
+  }
 }
 function refs(el, raw) {
   const re = /\[\[message:(?:([\w-]{1,80}):)?([\w-]{1,80}):(prompt|answer)\]\]/g; let end = 0;
@@ -571,22 +585,40 @@ function highlightTool(pre, body) {
   }
   pre.append(body.slice(end));
 }
-function entry(view, key, iconName, iconClass, title, subject, body) {
+function drawTool(details) {
+  const [readable, raw] = details.children[1].children;
+  readable.setAttribute('aria-pressed', String(!details.rawMode)); raw.setAttribute('aria-pressed', String(Boolean(details.rawMode)));
+  const pre = details.lastChild;
+  if (details.rawMode) { pre.classList.remove('tool-syntax'); text(pre, details.rawOutput); }
+  else { pre.replaceChildren(); highlightTool(pre, details.readable); }
+}
+function formatTool(value) {
+  const parsed = parse(value);
+  if (parsed && typeof parsed === 'object') return format(parsed);
+  return format(value);
+}
+function entry(view, key, iconName, iconClass, title, subject, body, raw) {
   let d = view.entries.get(key);
   if (!d) {
     d = node('details'); const s = node('summary');
     s.append(icon(iconName), node('b'), node('code'), icon('loader'));
-    d.append(s, node('pre')); view.entries.set(key, d); view.activity.append(d);
+    d.append(s);
+    if (raw !== undefined) {
+      const modes = node('div','tool-view'); modes.setAttribute('role','group'); modes.setAttribute('aria-label','Tool output format');
+      for (const mode of ['Readable','Raw']) {
+        const b = node('button','quiet',mode); b.type = 'button';
+        b.onclick = () => { d.rawMode = mode === 'Raw'; drawTool(d); };
+        modes.append(b);
+      }
+      d.append(modes);
+    }
+    d.append(node('pre')); view.entries.set(key, d); view.activity.append(d);
   }
   const [lead, b, code, tail] = d.firstChild.children;
   setIcon(lead, iconName); text(b, title); text(code, subject);
   if (iconClass === 'running') setIcon(tail, 'loader', 'spin'); else if (iconClass === 'wait') setIcon(tail, 'shield', 'wait'); else if (iconClass === 'bad') setIcon(tail, 'x-circle', 'bad'); else if (iconClass === 'ok') setIcon(tail, 'check', 'ok'); else tail.setAttribute('class', 'icon sr');
-  const pre = d.lastChild;
-  if (pre.dataset.body !== body) {
-    pre.dataset.body = body;
-    if (!key.startsWith('tool:')) text(pre, body);
-    else highlightTool(pre, body);
-  }
+  if (raw === undefined) text(d.lastChild, body);
+  else if (d.readable !== body || d.rawOutput !== raw) { d.readable = body; d.rawOutput = raw; drawTool(d); }
 }
 function renderCompaction(v, turn, active) {
   v.prompt.hidden = true; v.answer.hidden = true; v.activity.hidden = true; v.note.hidden = false; v.root.classList.add('compact');
@@ -635,7 +667,7 @@ function render(ctx) {
         const name = tool.toolName || tool.tool_name || 'Tool';
         const outcome = !tool.complete ? (active ? (ctx.approvalCount ? 'wait' : 'running') : 'bad') : (tool.success === false ? 'bad' : 'ok');
         const result = tool.result?.content ?? tool.result ?? tool.error ?? '';
-        entry(v, 'tool:' + key, toolIcon(name), outcome, name, toolSummary(tool.arguments), 'Arguments\n' + format(tool.arguments ?? {}) + (tool.complete ? '\n\nResult\n' + format(result) : ''));
+        entry(v, 'tool:' + key, toolIcon(name), outcome, name, toolSummary(tool.arguments), 'Arguments\n' + formatTool(tool.arguments ?? {}) + (tool.complete ? '\n\nResult\n' + formatTool(result) : ''), JSON.stringify({arguments: tool.arguments, result: tool.result, error: tool.error}));
       }
       const waiting = active && !turn.answer && !draft, working = waiting && status !== 'queued' && !v.entries.size;
       v.answer.classList.toggle('working', working);
@@ -855,8 +887,9 @@ async function loadTimeline() {
     text($('timeline-status'), $('timeline-list').children.length ? '' : 'No events recorded.');
   } catch(e) { if (context === ctx) text($('timeline-status'), e.message); } finally { more.disabled = false; }
 }
-$('timeline-button').onclick = () => { timelineAfter = 0; $('timeline-list').replaceChildren(); $('timeline-more').hidden = true; text($('timeline-status'), 'Loading…'); $('timeline-dialog').showModal(); loadTimeline(); };
+$('timeline-button').onclick = () => { $('settings-dialog').close(); timelineAfter = 0; $('timeline-list').replaceChildren(); $('timeline-more').hidden = true; text($('timeline-status'), 'Loading…'); $('timeline-dialog').showModal(); loadTimeline(); };
 $('timeline-more').onclick = loadTimeline;
+$('timeline-dialog').addEventListener('close', () => $('open-settings').focus());
 $('notice-close').onclick = () => notice();
 $('menu').onclick = () => openSidebar(!$('sidebar').classList.contains('open'));
 $('scrim').onclick = () => openSidebar(false);

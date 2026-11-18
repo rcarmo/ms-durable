@@ -24,7 +24,7 @@ const turns: any[] = [
 ];
 const events = [
   {seq: 1, turn_id: 't1', type: 'tool.execution_start', data: {toolCallId: 'a', toolName: 'bash', arguments: {command: 'ls -1'}}},
-  {seq: 2, turn_id: 't1', type: 'tool.execution_complete', data: {toolCallId: 'a', success: true, result: {content: 'AGENTS.md\nnotes.txt'}}},
+  {seq: 2, turn_id: 't1', type: 'tool.execution_complete', data: {toolCallId: 'a', success: true, result: {content: '{"files":["AGENTS.md","notes.txt"],"ok":true}'}}},
   {seq: 3, turn_id: 't3', type: 'assistant.reasoning_delta', data: {deltaContent: 'I should write the file with the edit tool.'}},
   {seq: 4, turn_id: 't3', type: 'tool.execution_start', data: {toolCallId: 'b', toolName: 'create', arguments: {path: 'summary.md'}}},
 ];
@@ -108,7 +108,16 @@ try {
     await page.emulateMedia({forcedColors:'none',colorScheme:'dark'});
     await page.locator('.activity summary').first().click();
     await page.locator('.activity pre').filter({hasText: 'notes.txt'}).waitFor();
-    await page.locator('.tool-syntax .key').filter({hasText:'command'}).first().waitFor();
+    const output = page.locator('.activity details[open]').first();
+    const pre = output.locator('pre');
+    await pre.locator('.key').filter({hasText:'command'}).waitFor();
+    await pre.locator('.key').filter({hasText:'files'}).waitFor();
+    if (!(await pre.textContent())?.includes('\n  "files": [')) throw new Error('Result JSON was not pretty-printed');
+    await output.getByRole('button',{name:'Raw',exact:true}).click();
+    const raw = JSON.parse((await pre.textContent())!);
+    if (raw.arguments.command !== 'ls -1' || raw.result.content !== events[1].data.result?.content) throw new Error('Raw payload changed');
+    await output.getByRole('button',{name:'Readable',exact:true}).click();
+    await pre.locator('.key').filter({hasText:'files'}).waitFor();
     await page.locator('#context-button').click();
     await page.waitForFunction(() => document.querySelector('#context-summary')?.textContent?.includes('41k of 128k')).catch(async e => { throw new Error('context: ' + await page.evaluate(() => JSON.stringify({open: (document.querySelector('#context-dialog') as any).open, s: document.querySelector('#context-summary')!.textContent}))); });
     await page.screenshot({path: root + '/context.png'});
@@ -157,9 +166,15 @@ try {
     if (!(await page.evaluate(() => navigator.clipboard.readText())).includes('AGENTS.md')) throw new Error('Copy failed');
     await first.getByRole('button',{name:'Reference answer'}).focus(); await page.keyboard.press('Enter');
     if (!(await page.locator('#prompt').inputValue()).includes('[[message:s1:t1:answer]]')) throw new Error('Missing reference');
+    for (const name of ['Copy answer','Reference answer']) {
+      await first.getByRole('button',{name}).locator('svg').waitFor();
+    }
+    await page.locator('#prompt').fill(''); await first.locator('.message-time').last().click();
+    if (!(await page.locator('#prompt').inputValue()).includes('[[message:s1:t1:answer]]')) throw new Error('Timestamp did not reference answer');
     await page.getByRole('link',{name:'View referenced answer'}).focus(); await page.keyboard.press('Enter');
     if (!await first.locator('.answer').evaluate(el => el === document.activeElement)) throw new Error('Reference did not focus target');
-    await page.getByRole('button',{name:'Timeline'}).click(); await page.getByRole('button',{name:'Load more events'}).click();
+    if (await page.locator('.topbar #timeline-button').count()) throw new Error('Event log is a diagnostic');
+    await page.locator('#open-settings').click(); await page.getByRole('button',{name:'Session event log'}).click(); await page.getByRole('button',{name:'Load more events'}).click();
     await page.getByText('#4 · tool.execution_start').waitFor(); await page.keyboard.press('Escape');
     await page.locator('#open-settings').click(); await page.locator('#theme').selectOption('dark'); await page.keyboard.press('Escape');
     await page.locator('#prompt').fill('');
@@ -186,6 +201,10 @@ try {
     await page.locator('#menu').click(); await page.locator('#sessions button').first().click();
     await page.locator('#plan-items').getByText('In progress').waitFor();
     await page.screenshot({path: root + '/plan-mobile.png'});
+    await page.setViewportSize({width:1280,height:860});
+    const dock = (await page.locator('#plan-panel').boundingBox())!, chat = (await page.locator('#chat-column').boundingBox())!, input = (await page.locator('#composer').boundingBox())!;
+    if (dock.x < chat.x + chat.width || dock.x < input.x + input.width || dock.width !== 320) throw new Error('Plan should dock beside chat and composer');
+    await page.screenshot({path: root + '/plan-desktop.png'});
   });
   console.log(JSON.stringify({checks, evidence: root}, null, 2));
 } finally {
