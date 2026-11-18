@@ -1,0 +1,10 @@
+**
+!Dockerfile
+!requirements.lock
+!LICENSE
+!agent/
+!agent/**
+!static/
+!static/**
+**/__pycache__/
+**/*.pyc

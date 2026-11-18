@@ -42,6 +42,21 @@ Do not restart the server from one of its own active tools. It won't like it.
 
 This uses SSE for transport, and I recommend HTTPS for remote access, either directly or through a reverse proxy which forwards streaming responses without buffering .The application does not manage certificates or install a service (again, designed to run in Azure PaaS or with an App Gateway in front).
 
+## Container
+
+The Linux amd64 image includes the pinned Copilot runtime and runs as UID/GID `10001`. It stores SQLite and runtime state under `/state`, and uses `/work` as the coding workspace. Keep both in separate persistent volumes. Supply a server-side Copilot credential or BYOK config at runtime; neither belongs in the image.
+
+```sh
+docker run --init --rm -p 127.0.0.1:8015:8015 \
+  --env-file ./ms-durable.env \
+  -v ms-durable-state:/state -v ms-durable-work:/work \
+  ghcr.io/rcarmo/ms-durable:v0.1.0
+```
+
+Set `COPILOT_GITHUB_TOKEN` and `MS_DURABLE_TOKEN` in the protected environment file, or mount a BYOK configuration read-only and set `MS_DURABLE_PROVIDERS_FILE` and the required credential environment variables. If `MS_DURABLE_TOKEN` is omitted, the app generates `/state/web-token`. Bind mounts must be writable by UID `10001` where applicable. Keep the port local or put the app behind HTTPS.
+
+The **Publish container** GitHub Actions workflow builds and smoke-tests before pushing to GHCR. Push a `v*` version tag to publish that image, or run the workflow manually on `main` and optionally supply an existing version tag. A manual run without a tag publishes `sha-<commit>`. The `v0.1.0` image uses the existing `v0.1.0` source tag with container packaging from `main`.
+
 ## Browser and application tools
 
 I may have gone a bit overboard for a baseline shell.

@@ -1,0 +1,73 @@
+name: Publish container
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: 'Existing v-tag to build (blank publishes a sha-tagged image of main)'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare source
+        id: source
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          image=${IMAGE,,}
+          if [[ $GITHUB_EVENT_NAME == workflow_dispatch && $SOURCE_TAG == main ]]; then
+            revision=$(git rev-parse HEAD)
+            tag=sha-${revision:0:12}
+          else
+            if [[ ! $SOURCE_TAG =~ ^v[0-9][a-zA-Z0-9._-]{0,126}$ ]]; then
+              echo 'Expected a version tag starting with v and a digit' >&2
+              exit 1
+            fi
+            revision=$(git rev-parse --verify "refs/tags/$SOURCE_TAG^{commit}")
+            tag=$SOURCE_TAG
+          fi
+          dir="$RUNNER_TEMP/ms-durable/container"
+          mkdir -p "$dir"
+          git archive "$revision" | tar -xf - -C "$dir"
+          # Bootstrap container support for source tags made before this Dockerfile existed.
+          if [[ ! -f $dir/Dockerfile ]]; then
+            cp Dockerfile .dockerignore "$dir/"
+          fi
+          cp tests/container-smoke.sh "$dir/tests/"
+          printf 'ref=%s:%s\ncontext=%s\nrevision=%s\n' "$image" "$tag" "$dir" "$revision" >> "$GITHUB_OUTPUT"
+      - name: Build and smoke-test
+        env:
+          REF: ${{ steps.source.outputs.ref }}
+          BUILD_CONTEXT: ${{ steps.source.outputs.context }}
+          REVISION: ${{ steps.source.outputs.revision }}
+        run: |
+          set -euo pipefail
+          docker build --pull --label "org.opencontainers.image.revision=$REVISION" --label "org.opencontainers.image.version=${REF##*:}" -t "$REF" "$BUILD_CONTEXT"
+          bash "$BUILD_CONTEXT/tests/container-smoke.sh" docker "$REF" "$BUILD_CONTEXT"
+      - name: Publish to GHCR
+        env:
+          REF: ${{ steps.source.outputs.ref }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$REF"
+          docker buildx imagetools inspect "$REF"
+          printf 'Published `%s`\n' "$REF" >> "$GITHUB_STEP_SUMMARY"
