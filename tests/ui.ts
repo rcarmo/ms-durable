@@ -41,7 +41,7 @@ const pendingApproval = {id: 'p1', status: 'pending', request: JSON.stringify({k
 let approvals = [pendingApproval];
 let linkPreviews = {enabled:false,any_domain:false};
 const plan = {revision:1, explanation:'Release checklist', items:[{step:'Inspect',status:'in_progress'}]};
-let emitPlan = () => {}, emitChat = () => {};
+let emitPlan = () => {}, emitChat = () => {}, emitChatUpdate = (_: unknown) => {};
 let timelineListener: ((emit: (event: unknown) => void) => void) | null = null;
 const calls: string[] = [];
 const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async fetch(request) {
@@ -84,7 +84,10 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   if (path === '/api/sessions/s2') return json({session: sessions[1], turns: [], events: [], approvals: []});
   if (path.endsWith('/events')) return new Response(new ReadableStream({start(c) {
     const encode = (s:string) => new TextEncoder().encode(s); c.enqueue(encode(': open\n\n'));
-    if (path.includes('/s1/')) timelineListener?.(event => c.enqueue(encode('data: ' + JSON.stringify(event) + '\n\n')));
+    if (path.includes('/s1/')) {
+      emitChatUpdate = event => c.enqueue(encode('data: ' + JSON.stringify(event) + '\n\n'));
+      timelineListener?.(emitChatUpdate);
+    }
     if (path.includes('/s1/')) emitChat = () => c.enqueue(encode('data: ' + JSON.stringify({seq:9001, turn_id:'t1', type:'app.chat_sent',data:{tool_call_id:'chat-call',destination:'@build',message:'Check the build.'}}) + '\n\n'));
     if (path.includes('/s1/')) emitPlan = () => {
       plan.revision++; plan.items[0].status = 'completed';
@@ -124,6 +127,14 @@ try {
       await page.goto(url + '#token=' + token);
       await page.locator('#message-bulk-399').waitFor({state:'attached'});
       const cdp = await page.context().newCDPSession(page); await cdp.send('Performance.enable');
+      const metric = async (name: string) => (await cdp.send('Performance.getMetrics')).metrics.find(m => m.name === name)!.value;
+      await page.locator('#connection[data-state=live]').waitFor();
+      const scriptBefore = await metric('ScriptDuration');
+      for (let frame = 0; frame < 24; frame++) {
+        emitChatUpdate({seq:1000+frame,turn_id:'bulk-399',type:'assistant.reasoning_delta',data:{deltaContent:`Frame ${frame}. `}});
+        await page.locator('#message-bulk-399 .reasoning-content').getByText(`Frame ${frame}.`,{exact:false}).waitFor({state:'attached'});
+      }
+      const streamScriptMs = (await metric('ScriptDuration') - scriptBefore) * 1000;
       const layout = async () => (await cdp.send('Performance.getMetrics')).metrics.find(m => m.name === 'LayoutDuration')!.value;
       const before = await layout();
       for (let i = 0; i < 12; i++) {
@@ -137,7 +148,7 @@ try {
       await page.locator('#sessions .session-select').getByText('Summarise the release notes', {exact:false}).click();
       try {
         const cachedBeforeResponse = await page.locator('#message-bulk-399').count() === 1;
-        console.log(JSON.stringify({turns:fixture.length, resizes:12, layoutMs, cachedBeforeResponse}));
+        console.log(JSON.stringify({turns:fixture.length, resizes:12, liveFrames:24, streamScriptMs, layoutMs, cachedBeforeResponse}));
         if (process.env.MS_DURABLE_TIMELINE_PROFILE === 'verify' && !cachedBeforeResponse) throw new Error('Returning to a session waited on the network');
       } finally { unblock(); }
     });

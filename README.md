@@ -172,6 +172,8 @@ make test-browser    # Chromium + actual Copilot model; consumes model allowance
 
 `make test-ui` covers rendering, approvals, the context dialog and the mobile drawer in light and dark schemes; screenshots are written to the run directory. Both browser targets require an installed Playwright Chromium build at `PLAYWRIGHT_BROWSERS_PATH`; `make test-browser` also needs a working Copilot credential. Set `MS_DURABLE_MODEL` to choose its model. Native tests use no real provider key or remote model. SDK installation/runtime extraction can require downloads.
 
+Run `MS_DURABLE_TIMELINE_PROFILE=verify make test-ui` for the opt-in timeline profile. It streams 24 updates into one turn in a 400-turn fixture, measures Chromium scripting time and 12 viewport resizes, and checks that switching back renders cached history before the server responds. On Chromium 148.0.7778.96, the 24 updates used 1,124 ms of scripting at `4a8e45c` and 16–17 ms after limiting live renders to changed turns. Resize layout time was 45 ms before and 43–44 ms after.
+
 Opt-in skill/Memento and restart probes use an isolated directory:
 
 ```sh

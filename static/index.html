@@ -895,90 +895,110 @@ function renderCompaction(v, turn, active) {
   if (turn.status === 'done' && r.success) text(v.note, 'Context compacted · ' + (r.messagesRemoved ?? 0) + ' messages, ' + (r.tokensRemoved ?? 0) + ' tokens removed');
   else text(v.note, 'Compaction ' + (STATES[turn.status] || turn.status || 'did not complete').toLowerCase());
 }
-function render(ctx) {
-  if (context !== ctx) return;
-  const scrollTop = ctx.followLatest ? null : $('transcript').scrollTop;
-  const keep = new Set(), eventsByTurn = new Map();
-  for (const event of [...ctx.events.values()].sort((a,b) => a.seq - b.seq)) {
-    const key = String(event.turn_id); if (!eventsByTurn.has(key)) eventsByTurn.set(key, []); eventsByTurn.get(key).push(event);
-  }
-  ctx.active = false;
-  let settled = 0;
-  ctx.turns.forEach((turn, index) => {
-    const id = String(turn.id); keep.add(id);
-    let v = turnNodes.get(id); if (!v) { v = newTurn(id); turnNodes.set(id, v); }
-    const status = String(turn.status || '').toLowerCase(), active = !DONE.has(status);
-    ctx.active ||= active; if (!active) settled++;
-    if (turn.kind === 'compact') {
-      renderCompaction(v, turn, active);
-      v.state.hidden = true; text(v.error, active ? '' : (turn.error ? format(turn.error) : ''));
-    } else {
-      v.note.hidden = true;
-      text(v.promptMeta.firstChild, turn.sender_id ? (turn.kind === 'chat_reply' ? 'Reply from ' : turn.kind === 'delegation' ? 'Delegated by ' : '') + (turn.sender_handle ? '@' + turn.sender_handle : 'Agent') : 'You');
-      text(v.answerMeta.firstChild, ctx.session?.handle ? '@' + ctx.session.handle : sessionName(ctx.session));
-      const raw = turn.prompt || '';
-      if (v.prompt.dataset.raw !== raw) { v.prompt.dataset.raw = raw; markdown(v.prompt, raw); }
-      showImages(v, turn, ctx); showSharedFiles(v, turn, ctx);
-      stamp(v.promptMeta, turn.created_at); stamp(v.answerMeta, turn.finished_at);
-      v.promptMeta.hidden = !raw && !(turn.images || []).length;
-      for (const button of [...v.answerMeta.children].slice(2)) button.hidden = active;
-      let draft = '', thought;
-      const activity = new Map();
-      for (const e of eventsByTurn.get(id) || []) {
-        const d = e.data || {};
-        if (e.type === 'assistant.message_delta') draft += d.deltaContent || d.delta_content || '';
-        if (e.type === 'assistant.reasoning_delta') {
-          const delta = d.deltaContent || d.delta_content || '';
-          if (!delta) continue;
-          if (!thought) { thought = {thoughts:''}; activity.set('thought:' + e.seq, thought); }
-          thought.thoughts += delta;
-        } else if (['app.chat_sent','tool.execution_start','tool.execution_complete'].includes(e.type)) {
-          thought = null;
-          const call = d.toolCallId || d.tool_call_id;
-          const key = call ? 'tool:' + call : 'event:' + e.seq;
-          let tool = activity.get(key);
-          if (!tool) { tool = {receipts:[]}; activity.set(key, tool); }
-          if (e.type === 'app.chat_sent') tool.receipts.push(d);
-          else { Object.assign(tool, d); tool.complete ||= e.type === 'tool.execution_complete'; }
-        }
+function renderTurn(ctx, turn, v, status, active) {
+  const id = String(turn.id);
+  if (turn.kind === 'compact') {
+    renderCompaction(v, turn, active);
+    v.state.hidden = true; text(v.error, active ? '' : (turn.error ? format(turn.error) : ''));
+  } else {
+    v.note.hidden = true;
+    text(v.promptMeta.firstChild, turn.sender_id ? (turn.kind === 'chat_reply' ? 'Reply from ' : turn.kind === 'delegation' ? 'Delegated by ' : '') + (turn.sender_handle ? '@' + turn.sender_handle : 'Agent') : 'You');
+    text(v.answerMeta.firstChild, ctx.session?.handle ? '@' + ctx.session.handle : sessionName(ctx.session));
+    const raw = turn.prompt || '';
+    if (v.prompt.dataset.raw !== raw) { v.prompt.dataset.raw = raw; markdown(v.prompt, raw); }
+    showImages(v, turn, ctx); showSharedFiles(v, turn, ctx);
+    stamp(v.promptMeta, turn.created_at); stamp(v.answerMeta, turn.finished_at);
+    v.promptMeta.hidden = !raw && !(turn.images || []).length;
+    for (const button of [...v.answerMeta.children].slice(2)) button.hidden = active;
+    let draft = '', thought;
+    const activity = new Map();
+    const events = ctx.eventsByTurn.get(id);
+    for (const e of events ? [...events.values()].sort((a,b) => a.seq - b.seq) : []) {
+      const d = e.data || {};
+      if (e.type === 'assistant.message_delta') draft += d.deltaContent || d.delta_content || '';
+      if (e.type === 'assistant.reasoning_delta') {
+        const delta = d.deltaContent || d.delta_content || '';
+        if (!delta) continue;
+        if (!thought) { thought = {thoughts:''}; activity.set('thought:' + e.seq, thought); }
+        thought.thoughts += delta;
+      } else if (['app.chat_sent','tool.execution_start','tool.execution_complete'].includes(e.type)) {
+        thought = null;
+        const call = d.toolCallId || d.tool_call_id;
+        const key = call ? 'tool:' + call : 'event:' + e.seq;
+        let tool = activity.get(key);
+        if (!tool) { tool = {receipts:[]}; activity.set(key, tool); }
+        if (e.type === 'app.chat_sent') tool.receipts.push(d);
+        else { Object.assign(tool, d); tool.complete ||= e.type === 'tool.execution_complete'; }
       }
-      let position = 0;
-      for (const [key, tool] of activity) {
-        let row;
-        if (tool.thoughts !== undefined) {
-          row = entry(v, key, active && !draft && tool === thought ? 'running' : 'ok', 'Thinking through the request', tool.thoughts);
-        } else {
-          const sent = tool.receipts, name = tool.toolName || tool.tool_name || (sent.length ? 'chat' : 'Tool');
-          const receipt = sent.map(r => 'Sent to ' + r.destination + '\n' + r.message).join('\n\n');
-          const receiptOnly = sent.length && !tool.toolName && !tool.tool_name && !tool.complete;
-          const outcome = receiptOnly ? 'ok' : !tool.complete ? (active ? (ctx.approvalCount ? 'wait' : 'running') : 'bad') : (tool.success === false ? 'bad' : 'ok');
-          const result = tool.result?.content ?? tool.result ?? tool.error ?? '';
-          const args = tool.arguments ?? (receiptOnly ? {session_id:sent[0].destination, prompt:sent[0].message} : {});
-          row = entry(v, key, outcome, toolSummary({...tool, arguments:args}, name), 'Arguments\n' + formatTool(args) + (tool.complete ? '\n\nResult\n' + formatTool(result) : ''), JSON.stringify({tool:name, arguments:args, result:tool.result, error:tool.error, ...(sent.length ? {deliveries:sent} : {})}), receipt);
-        }
-        const current = v.activity.children[position++]; if (current !== row) v.activity.insertBefore(row, current || null);
-      }
-      for (const [key, row] of v.entries) if (!activity.has(key)) { row.remove(); v.entries.delete(key); }
-      v.answerMeta.hidden = !turn.answer && !draft;
-      const waiting = active && !turn.answer && !draft, working = waiting && status !== 'queued' && !v.entries.size;
-      v.answer.classList.toggle('working', working);
-      if (working || !(turn.answer || draft)) { v.answer.md = null; text(v.answer, working ? 'Working' : ''); }
-      else markdown(v.answer, turn.answer || draft);
-      v.answer.dataset.raw = turn.answer || draft;
-      text(v.error, turn.error ? format(turn.error) : '');
-      const label = status === 'done' ? '' : (status === 'running' && !waiting ? '' : STATES[status] || (active ? '' : status));
-      v.state.hidden = !label || (status === 'running');
-      v.state.classList.toggle('bad', ['error','failed','interrupted'].includes(status));
-      setIcon(v.stateIcon, status === 'queued' ? 'loader' : (['cancelled','canceled','stopped'].includes(status) ? 'stop' : 'alert'));
-      text(v.stateText, label);
     }
-    const current = $('turns').children[index]; if (current !== v.root) $('turns').insertBefore(v.root, current || null);
-  });
-  for (const [id, v] of turnNodes) if (!keep.has(id)) { v.root.remove(); turnNodes.delete(id); }
-  $('empty').hidden = ctx.turns.length > 0;
-  if (ctx.settled !== undefined && settled > ctx.settled && ctx.contextLoaded) loadContext(ctx);
-  ctx.settled = settled;
-  controls();
+    let position = 0;
+    for (const [key, tool] of activity) {
+      let row;
+      if (tool.thoughts !== undefined) {
+        row = entry(v, key, active && !draft && tool === thought ? 'running' : 'ok', 'Thinking through the request', tool.thoughts);
+      } else {
+        const sent = tool.receipts, name = tool.toolName || tool.tool_name || (sent.length ? 'chat' : 'Tool');
+        const receipt = sent.map(r => 'Sent to ' + r.destination + '\n' + r.message).join('\n\n');
+        const receiptOnly = sent.length && !tool.toolName && !tool.tool_name && !tool.complete;
+        const outcome = receiptOnly ? 'ok' : !tool.complete ? (active ? (ctx.approvalCount ? 'wait' : 'running') : 'bad') : (tool.success === false ? 'bad' : 'ok');
+        const result = tool.result?.content ?? tool.result ?? tool.error ?? '';
+        const args = tool.arguments ?? (receiptOnly ? {session_id:sent[0].destination, prompt:sent[0].message} : {});
+        row = entry(v, key, outcome, toolSummary({...tool, arguments:args}, name), 'Arguments\n' + formatTool(args) + (tool.complete ? '\n\nResult\n' + formatTool(result) : ''), JSON.stringify({tool:name, arguments:args, result:tool.result, error:tool.error, ...(sent.length ? {deliveries:sent} : {})}), receipt);
+      }
+      const current = v.activity.children[position++]; if (current !== row) v.activity.insertBefore(row, current || null);
+    }
+    for (const [key, row] of v.entries) if (!activity.has(key)) { row.remove(); v.entries.delete(key); }
+    v.answerMeta.hidden = !turn.answer && !draft;
+    const waiting = active && !turn.answer && !draft, working = waiting && status !== 'queued' && !v.entries.size;
+    v.answer.classList.toggle('working', working);
+    if (working || !(turn.answer || draft)) { v.answer.md = null; text(v.answer, working ? 'Working' : ''); }
+    else markdown(v.answer, turn.answer || draft);
+    v.answer.dataset.raw = turn.answer || draft;
+    text(v.error, turn.error ? format(turn.error) : '');
+    const label = status === 'done' ? '' : (status === 'running' && !waiting ? '' : STATES[status] || (active ? '' : status));
+    v.state.hidden = !label || (status === 'running');
+    v.state.classList.toggle('bad', ['error','failed','interrupted'].includes(status));
+    setIcon(v.stateIcon, status === 'queued' ? 'loader' : (['cancelled','canceled','stopped'].includes(status) ? 'stop' : 'alert'));
+    text(v.stateText, label);
+  }
+}
+function render(ctx, partial = false) {
+  if (context !== ctx) return;
+  const dirty = ctx.dirtyTurns;
+  partial &&= !ctx.structureChanged;
+  if (partial && !dirty.size) return;
+  const scrollTop = ctx.followLatest ? null : $('transcript').scrollTop;
+  if (partial) {
+    for (const id of dirty) {
+      const turn = ctx.turnIndex.get(id), view = turnNodes.get(id);
+      if (!turn || !view) continue;
+      const status = String(turn.status || '').toLowerCase();
+      renderTurn(ctx, turn, view, status, !DONE.has(status));
+    }
+  } else {
+    const keep = new Set();
+    const transcript = $('turns');
+    ctx.active = false;
+    let settled = 0;
+    ctx.turnIndex.clear();
+    ctx.turns.forEach((turn, index) => {
+      const id = String(turn.id); keep.add(id); ctx.turnIndex.set(id, turn);
+      let view = turnNodes.get(id);
+      if (!view) { view = newTurn(id); turnNodes.set(id, view); }
+      const status = String(turn.status || '').toLowerCase(), active = !DONE.has(status);
+      ctx.active ||= active; if (!active) settled++;
+      renderTurn(ctx, turn, view, status, active);
+      const current = transcript.children[index];
+      if (current !== view.root) transcript.insertBefore(view.root, current || null);
+    });
+    for (const [id, view] of turnNodes) if (!keep.has(id)) { view.root.remove(); turnNodes.delete(id); }
+    $('empty').hidden = ctx.turns.length > 0;
+    if (ctx.settled !== undefined && settled > ctx.settled && ctx.contextLoaded) loadContext(ctx);
+    ctx.settled = settled;
+    ctx.structureChanged = false;
+    controls();
+  }
+  dirty.clear();
   if (ctx.followLatest) bottom();
   else { $('transcript').scrollTop = scrollTop; $('jump').hidden = false; }
 }
@@ -1006,13 +1026,28 @@ function drawPlan() {
 }
 $('plan-toggle').onclick = () => setPlanOpen($('plan-panel').hidden);
 $('plan-close').onclick = () => setPlanOpen(false, true);
+const renderedEvents = new Set(['assistant.message_delta','assistant.reasoning_delta','tool.execution_start','tool.execution_complete','app.chat_sent']);
+function rememberEvent(ctx, event) {
+  if (ctx.events.has(event.seq)) return false;
+  ctx.events.set(event.seq, event);
+  if (event.turn_id != null && renderedEvents.has(event.type)) {
+    const id = String(event.turn_id);
+    let events = ctx.eventsByTurn.get(id);
+    if (!events) ctx.eventsByTurn.set(id, events = new Map());
+    events.set(event.seq, event);
+    if (ctx.turnIndex.has(id)) ctx.dirtyTurns.add(id);
+  }
+  return true;
+}
 function applyEvent(ctx, event) {
   if (!Number.isFinite(event.seq)) return;
-  ctx.after = Math.max(ctx.after, event.seq); ctx.events.set(event.seq, event);
+  ctx.after = Math.max(ctx.after, event.seq);
+  if (!rememberEvent(ctx, event)) return;
   if (event.type === 'app.plan_updated') acceptPlan(ctx, event.data);
   if (event.type === 'turn.updated' && event.data?.id != null) {
     const i = ctx.turns.findIndex(t => String(t.id) === String(event.data.id));
     if (i < 0) ctx.turns.push(event.data); else ctx.turns[i] = {...ctx.turns[i], ...event.data};
+    ctx.structureChanged = true;
   }
 }
 async function snapshot(ctx) {
@@ -1028,12 +1063,12 @@ function applySnapshot(ctx, data, ready = true) {
   ctx.turns = data.turns || []; ctx.ready = ready;
   acceptPlan(ctx, data.plan);
   for (const e of data.events || []) {
-    ctx.events.set(e.seq, e);
+    rememberEvent(ctx, e);
     if (ready) ctx.after = Math.max(ctx.after, e.seq);
   }
   if (!ready) ctx.after = data.after || 0;
   // Extra receipts are sparse; do not jump the SSE cursor past unseen events.
-  for (const e of data.sent_messages || []) ctx.events.set(e.seq, e);
+  for (const e of data.sent_messages || []) rememberEvent(ctx, e);
   showSession(ctx, data.session);
   if (document.activeElement !== $('model')) $('model').value = data.session.model;
   ctx.approvalCount = (data.approvals || []).length;
@@ -1062,7 +1097,9 @@ async function stream(ctx) {
         if (line === '') {
           if (dataLines.length) {
             const event = JSON.parse(dataLines.join('\n')); applyEvent(ctx, event);
-            if (!ctx.frame) ctx.frame = requestAnimationFrame(() => { ctx.frame = 0; render(ctx); });
+            if (!ctx.frame && (ctx.structureChanged || ctx.dirtyTurns.size)) {
+              ctx.frame = requestAnimationFrame(() => { ctx.frame = 0; render(ctx, true); });
+            }
             if (['app.chat_reply','app.turn_queued','app.turn_started','app.turn_settled','app.file_shared','app.approval','app.session_renamed','app.session_description_updated'].includes(event.type)) scheduleSnapshot(ctx);
             backoff = 1000;
           }
@@ -1177,7 +1214,7 @@ function selectSession(id) {
   text($('context-label'), '');
   $('empty').hidden = Boolean(id); controls(); renderSessions();
   if (id) {
-    const ctx = context = {id, controller:new AbortController(), events:new Map(), turns:[], after:0, active:false, ready:false, timer:null, followLatest:true};
+    const ctx = context = {id, controller:new AbortController(), events:new Map(), eventsByTurn:new Map(), dirtyTurns:new Set(), turnIndex:new Map(), turns:[], after:0, active:false, ready:false, timer:null, followLatest:true};
     status('Connecting…', 'wait');
     const cached = recentSessions.get(id);
     if (cached) applySnapshot(ctx, {...cached, session:row || cached.session}, false);
