@@ -42,14 +42,14 @@ Use HTTPS for remote access, either directly or through a reverse proxy which fo
 
 ## Browser and application tools
 
-The UI has independent conversations, streaming text, expandable tool activity, a durable queue, approvals, cancellation, a model picker and native context/compaction controls. Model changes apply at a turn boundary. The UI renders model output as text, not executable HTML. On reconnect it reconciles the snapshot and resumes SSE from its last sequence number.
+The UI has independent conversations, streaming text, expandable tool activity, a durable queue, approvals, cancellation, a model picker and native context/compaction controls. Model changes apply at a turn boundary. The UI renders messages with bundled Markdown-it, with raw HTML disabled. On reconnect it reconciles the snapshot and resumes SSE from its last sequence number.
 
 - **Appearance:** follow the system theme or choose light or dark in Settings.
 - **Images:** attach PNG, JPEG, GIF, WebP or SVG (up to three per message, 1 MiB each). The original bytes live in SQLite and an authenticated media route serves them. The browser displays SVG in image context. Images are not added automatically to model requests. The model can inspect them on demand with the attachment tool.
 - **Tool output:** expand a tool call for pretty-printed JSON or plain text in **Readable**. Switch to **Raw** to inspect the recorded arguments, result and error. The paginated session event log is under **Settings → Diagnostics**.
 - **Plan:** open the checklist from the chat header. It docks to the right of chat on desktop and stacks above it on narrow screens. The agent’s changes appear live; each conversation keeps its own plan in SQLite.
-- **Message references:** use the **Copy** icon for text. Select the **Reference** icon or the timestamp to insert a reference into the composer. It uses the full chat ID, turn ID and message role; the transcript shows shortened IDs. Select the reference to jump to the message in the same chat. Answers written before timestamp support have no recorded completion time.
-- **Named sessions:** enter an optional unique `@name` before the first send. Names are case-insensitive. Agents can send to named sessions or raw session IDs using the application tool. The recipient sees the sender and no reply is sent back automatically.
+- **Message references:** use the **Copy** icon for text. Select the **Reference** icon or the timestamp to insert a reference into the composer. The composer and transcript show a short turn ID, such as `#e1b4c29a` (seven ID characters plus `a` for answer or `u` for user). Stored references retain the full chat ID, turn ID and role. Select the reference to jump to the message in the same chat. Answers written before timestamp support have no recorded completion time.
+- **Named sessions:** use the pencil in the header to rename a session without changing its ID or handle. Enter an optional unique `@name` before the first send. Names are case-insensitive. Agents can send to named sessions or raw session IDs using the application tool. The recipient sees the sender and no reply is sent back automatically.
 
 Application tools are visible to every application session:
 

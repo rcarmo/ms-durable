@@ -119,6 +119,22 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             raise ValueError("Agent name already exists") from None
         return await self.session(sid)
 
+    async def rename_session(self, sid, title):
+        async with self.transaction() as db:
+            cursor = await db.execute("SELECT * FROM sessions WHERE id=?", (sid,))
+            previous = await cursor.fetchone()
+            if previous is None:
+                raise KeyError("Unknown session")
+            session = dict(previous)
+            if session["title"] != title:
+                await db.execute("UPDATE sessions SET title=? WHERE id=?", (title, sid))
+                await db.execute(
+                    "INSERT INTO events(session_id,type,data) VALUES(?,?,?)",
+                    (sid, "app.session_renamed", json.dumps({"title": title})),
+                )
+                session["title"] = title
+            return session
+
     async def session(self, sid):
         row = await self.one("SELECT * FROM sessions WHERE id=?", (sid,))
         if row is None:

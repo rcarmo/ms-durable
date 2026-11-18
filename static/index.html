@@ -47,7 +47,7 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relati
 #empty{max-width:420px;margin:18vh auto 0;text-align:center;color:var(--muted)}#empty h2{color:var(--text);font-size:1.1rem;margin-bottom:.3rem}
 .turn{margin-bottom:1.8rem}
 .prompt{white-space:pre-wrap;overflow-wrap:anywhere}
-.speaker{display:block;color:var(--muted);font-size:12px;font-weight:600;margin-bottom:4px}.compact .speaker,.compact .message-meta{display:none}
+.speaker{display:block;color:var(--muted);font-size:12px;font-weight:600;margin-bottom:4px}.compact .message-meta{display:none}
 .answer{overflow-wrap:anywhere;margin-top:.8rem}
 .answer>*+*{margin-top:.7rem}.answer p{white-space:pre-wrap}.answer h4{font-size:1rem;margin:0}.answer ul,.answer ol{margin-bottom:0;padding-left:1.3rem}.answer a{color:var(--accent)}
 .answer :not(pre)>code{background:var(--panel);padding:1px 3px}
@@ -139,6 +139,9 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 .plan-status{display:block;color:var(--muted);font-size:12px}.plan-description{margin-bottom:8px;overflow-wrap:anywhere}
 #plan-toggle[aria-expanded=true]{background:var(--selected)}
 .tool-view{display:flex;gap:4px;margin:6px 0}.tool-view button{font-size:12px;padding:2px 8px}.tool-view button[aria-pressed=true]{background:var(--selected)}
+ .message-meta .speaker{margin:0;color:var(--text);overflow-wrap:anywhere;min-width:0}.answer-meta{margin-top:12px}
+#rename-form{display:grid;gap:8px}#rename-name{width:100%;border:1px solid var(--border);border-radius:4px;padding:6px 8px;background:var(--bg)}
+.prompt{white-space:normal}.prompt>:first-child,.answer>:first-child{margin-top:0}.prompt>:last-child,.answer>:last-child{margin-bottom:0}.prompt pre,.answer pre{white-space:pre;overflow:auto;background:var(--panel);padding:8px}.prompt table,.answer table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}.prompt :is(th,td),.answer :is(th,td){padding:4px 8px;border:1px solid var(--border)}.prompt blockquote,.answer blockquote{margin:8px 0;padding:4px 12px;background:var(--panel)}.prompt a,.answer a{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -189,6 +192,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
   <header class="topbar">
     <button id="menu" type="button" class="iconbtn" aria-label="Conversations" aria-expanded="false" aria-controls="sidebar"><svg class="icon"><use href="#i-menu"/></svg></button>
     <h2 id="title">New conversation</h2>
+    <button id="rename-session" class="iconbtn" type="button" title="Rename session" aria-label="Rename session" hidden><svg class="icon" aria-hidden="true"><use href="#i-new"/></svg></button>
     <button id="plan-toggle" type="button" aria-expanded="false" aria-controls="plan-panel" hidden>Plan</button>
     <button id="context-button" type="button" aria-label="Context usage" title="Context usage and compaction" hidden><svg class="icon"><use href="#i-gauge"/></svg><span id="context-label"></span></button>
   </header>
@@ -230,6 +234,12 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
   </div>
 </main>
 </div>
+<dialog id="rename-dialog" aria-labelledby="rename-heading">
+  <header><h2 id="rename-heading">Rename session</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
+  <div class="body"><form id="rename-form"><label for="rename-name">Session name</label><input id="rename-name" maxlength="100" required>
+    <p id="rename-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="quiet" data-close>Cancel</button><button id="rename-save" class="primary" type="submit">Save</button></div>
+  </form></div>
+</dialog>
 <dialog id="settings-dialog" aria-labelledby="settings-title">
   <header><h2 id="settings-title">Settings</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
   <div class="body">
@@ -253,6 +263,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
   <div class="body"><p id="timeline-status" role="status"></p><ul id="timeline-list"></ul><button id="timeline-more" type="button" class="quiet" hidden>Load more events</button></div>
 </dialog>
 <output id="message-feedback" class="sr" aria-live="polite"></output>
+<script src="/vendor/markdown-it.min.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -315,6 +326,7 @@ function controls() {
   $('context-button').hidden = !selected;
   $('timeline-button').hidden = $('diagnostics').hidden = !selected;
   $('plan-toggle').hidden = !selected;
+  $('rename-session').hidden = !selected; $('rename-session').disabled = !context?.ready;
   $('agent-field').hidden = Boolean(selected);
   $('attach').disabled = sending || draftImages().length >= 3;
   $('agent-name').disabled = sending;
@@ -399,6 +411,15 @@ function renderConfig() {
     box.append(list);
   }
 }
+function sessionName(session) { return session?.title || 'Untitled conversation'; }
+function sessionLabel(session) { return session?.handle ? '@' + session.handle + ' · ' + sessionName(session) : sessionName(session); }
+function showSession(ctx, session) {
+  ctx.session = session;
+  text($('title'), sessionLabel(session)); document.title = sessionLabel(session) + ' — Chat';
+  const index = sessions.findIndex(s => String(s.id) === ctx.id);
+  if (index >= 0) sessions[index] = session; else sessions.unshift(session);
+  renderSessions();
+}
 function renderSessions() {
   const keep = new Set(), nav = $('sessions');
   sessions.forEach((s, index) => {
@@ -409,7 +430,7 @@ function renderSessions() {
       b.onclick = () => { if (!sending) selectSession(id); };
       sessionNodes.set(id, b);
     }
-    text(b.firstChild, s.handle ? '@' + s.handle + ' · ' + s.title : s.title || 'Untitled conversation'); text(b.lastChild, [modelName(s.model), when(s.created_at)].filter(Boolean).join(' · '));
+    text(b.firstChild, sessionLabel(s)); text(b.lastChild, [modelName(s.model), when(s.created_at)].filter(Boolean).join(' · '));
     b.setAttribute('aria-current', String(id === selected)); b.disabled = sending;
     const current = nav.children[index]; if (current !== b) nav.insertBefore(b, current || null);
   });
@@ -423,11 +444,12 @@ function newTurn(id) {
   const prompt = node('div', 'prompt'), activity = node('div', 'activity'), answer = node('div', 'answer'), error = node('div', 'error');
   const state = node('div', 'state'), stateIcon = icon('loader'), stateText = node('span'); state.append(stateIcon, stateText);
   const note = node('div', 'compact-note');
-  const speaker = node('span', 'speaker', 'You'), pictures = node('div', 'message-images');
+  const pictures = node('div', 'message-images');
   const promptMeta = messageMeta(id, 'prompt', prompt), answerMeta = messageMeta(id, 'answer', answer);
   root.id = 'message-' + id; root.tabIndex = -1;
-  root.append(note, speaker, prompt, pictures, promptMeta, activity, answer, answerMeta, error, state);
-  return {root, speaker, prompt, pictures, promptMeta, answerMeta, answer, error, activity, state, stateIcon, stateText, note, entries:new Map()};
+  answerMeta.classList.add('answer-meta');
+  root.append(note, promptMeta, prompt, pictures, activity, answerMeta, answer, error, state);
+  return {root, prompt, pictures, promptMeta, answerMeta, answer, error, activity, state, stateIcon, stateText, note, entries:new Map()};
 }
 function setTheme(value) {
   $('theme').value = value;
@@ -465,7 +487,7 @@ function messageMeta(id, role, content) {
   function reference() {
     const field = $('prompt');
     if (field.readOnly) return;
-    field.value += (field.value.trim() ? '\n' : '') + '[[message:' + selected + ':' + id + ':' + role + ']] ';
+    field.value += (field.value.trim() ? '\n' : '') + shortRef(id, role) + ' ';
     field.dispatchEvent(new Event('input')); field.focus(); field.setSelectionRange(field.value.length, field.value.length);
   }
   const timestamp = node('button', 'message-time'); timestamp.type = 'button'; timestamp.onclick = reference;
@@ -479,33 +501,47 @@ function messageMeta(id, role, content) {
     };
     bar.append(b);
   }
+  bar.append(node('span', 'speaker')); bar.prepend(bar.lastChild);
   return bar;
 }
 function stamp(bar, seconds) {
-  const button = bar.firstChild, t = button.firstChild; button.hidden = !seconds;
+  const button = bar.children[1], t = button.firstChild; button.hidden = !seconds;
   if (seconds) {
     const date = new Date(seconds * 1000), label = 'Reference message from ' + date.toLocaleString();
     t.dateTime = date.toISOString(); text(t, when(seconds));
     button.title = label; button.setAttribute('aria-label', label);
   }
 }
-function refs(el, raw) {
-  const re = /\[\[message:(?:([\w-]{1,80}):)?([\w-]{1,80}):(prompt|answer)\]\]/g; let end = 0;
-  for (const match of raw.matchAll(re)) {
-    el.append(raw.slice(end, match.index));
-    const [, sid, tid, role] = match;
-    const a = node('a', 'message-ref', '#' + (sid ? sid.slice(0, 8) + '/' : '') + tid.slice(0, 8) + ' · ' + role);
-    a.setAttribute('aria-label', 'View referenced ' + role); a.title = match[0]; a.href = '#message-' + tid;
-    a.onclick = e => {
-      e.preventDefault();
-      const view = (!sid || sid === selected) && turnNodes.get(tid), target = view?.[role];
-      if (!target || (!target.textContent && !(role === 'prompt' && view.pictures.children.length))) return notice('Referenced message is not in this conversation.');
-      target.tabIndex = -1; target.focus(); target.scrollIntoView({block:'center'});
-    };
-    el.append(a); end = match.index + match[0].length;
-  }
-  el.append(raw.slice(end));
+function shortRef(id, role) {
+  let length = 7;
+  while (length < id.length && [...turnNodes.keys()].some(other => other !== id && other.startsWith(id.slice(0,length)))) length++;
+  return '#' + id.slice(0,length) + (role === 'prompt' ? 'u' : 'a');
 }
+function expandRefs(text) {
+  return text.replace(/(^|\s)#([\da-f]{7,}(?:-[\da-f]+)*|t\d+)([ua])(?=\s|$|[.,!?;:)])/gi, (whole, space, prefix, suffix) => {
+    const matches = [...turnNodes.keys()].filter(id => id.startsWith(prefix));
+    return matches.length === 1 ? space + '[[message:' + selected + ':' + matches[0] + ':' + (suffix === 'u' ? 'prompt' : 'answer') + ']]' : whole;
+  });
+}
+const renderer = window.markdownit({html:false, breaks:true});
+renderer.disable('image');
+renderer.inline.ruler.before('link', 'message_ref', (state, silent) => {
+  const match = /^\[\[message:(?:([\w-]{1,80}):)?([\w-]{1,80}):(prompt|answer)\]\]/.exec(state.src.slice(state.pos,state.posMax));
+  if (!match) return false;
+  if (!silent) state.push('message_ref', '', 0).meta = match.slice(1);
+  state.pos += match[0].length; return true;
+});
+renderer.renderer.rules.message_ref = (tokens, index) => {
+  const [sid, id, role] = tokens[index].meta;
+  return '<a class="message-ref" aria-label="View referenced ' + role + '" data-chat="' + (sid || '') + '" data-turn="' + id + '" data-role="' + role + '" href="#message-' + id + '">' + shortRef(id, role) + '</a>';
+};
+$('turns').addEventListener('click', event => {
+  const link = event.target.closest('.message-ref'); if (!link) return;
+  event.preventDefault();
+  const {chat, turn, role} = link.dataset, view = (!chat || chat === selected) && turnNodes.get(turn), target = view?.[role];
+  if (!target || (!target.textContent && !(role === 'prompt' && view.pictures.children.length))) return notice('Referenced message is not in this conversation.');
+  target.tabIndex = -1; target.focus(); target.scrollIntoView({block:'center'});
+});
 function showImages(view, turn, ctx) {
   const items = turn.images || [], key = items.map(i => i.digest).join(',');
   if (view.pictures.dataset.key === key) return;
@@ -523,42 +559,10 @@ function showImages(view, turn, ctx) {
       .catch(() => { if (img.isConnected) img.replaceWith(node('span', 'muted', 'Image unavailable: ' + item.name)); });
   }
 }
-const BLOCK = /^\s*(```|#{1,4}\s|[-*]\s|\d+\.\s)/;
-function markdown(el, src) {
-  if (el.md === src) return; el.md = src; el.replaceChildren();
-  const lines = src.split('\n'); let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (/^\s*```/.test(line)) {
-      const body = []; i++;
-      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) body.push(lines[i++]);
-      i++; const pre = node('pre'); pre.append(node('code', '', body.join('\n'))); el.append(pre); continue;
-    }
-    if (!line.trim()) { i++; continue; }
-    const heading = line.match(/^\s*#{1,4}\s+(.*)/);
-    if (heading) { el.append(inline(node('h4'), heading[1])); i++; continue; }
-    const item = /^\s*([-*]|\d+\.)\s+/;
-    if (item.test(line)) {
-      const list = node(/^\s*\d/.test(line) ? 'ol' : 'ul');
-      while (i < lines.length && item.test(lines[i])) list.append(inline(node('li'), lines[i++].replace(item, '')));
-      el.append(list); continue;
-    }
-    const body = [lines[i++]];
-    while (i < lines.length && lines[i].trim() && !BLOCK.test(lines[i])) body.push(lines[i++]);
-    el.append(inline(node('p'), body.join('\n')));
-  }
-}
-function inline(el, s) {
-  const re = /`([^`\n]+)`|\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g; let last = 0, m;
-  while ((m = re.exec(s))) {
-    if (m.index > last) el.append(s.slice(last, m.index));
-    if (m[1] !== undefined) el.append(node('code', '', m[1]));
-    else if (m[2] !== undefined) el.append(node('strong', '', m[2]));
-    else { const a = node('a', '', m[3]); a.href = m[4]; a.target = '_blank'; a.rel = 'noopener noreferrer'; el.append(a); }
-    last = re.lastIndex;
-  }
-  if (last < s.length) el.append(s.slice(last));
-  return el;
+function markdown(el, source) {
+  if (el.md === source) return;
+  el.md = source;
+  el.innerHTML = renderer.render(source);
 }
 function toolSummary(args) {
   if (args == null) return '';
@@ -646,12 +650,14 @@ function render(ctx) {
       v.state.hidden = true; text(v.error, active ? '' : (turn.error ? format(turn.error) : ''));
     } else {
       v.note.hidden = true;
-      text(v.speaker, turn.sender_id ? (turn.sender_handle ? '@' + turn.sender_handle : 'Agent') : 'You');
+      text(v.promptMeta.firstChild, turn.sender_id ? (turn.sender_handle ? '@' + turn.sender_handle : 'Agent') : 'You');
+      text(v.answerMeta.firstChild, ctx.session?.handle ? '@' + ctx.session.handle : sessionName(ctx.session));
       const raw = turn.prompt || '';
-      if (v.prompt.dataset.raw !== raw) { v.prompt.dataset.raw = raw; v.prompt.replaceChildren(); refs(v.prompt, raw); }
+      if (v.prompt.dataset.raw !== raw) { v.prompt.dataset.raw = raw; markdown(v.prompt, raw); }
       showImages(v, turn, ctx);
       stamp(v.promptMeta, turn.created_at); stamp(v.answerMeta, turn.finished_at);
-      v.promptMeta.hidden = !raw && !(turn.images || []).length; v.answerMeta.hidden = !turn.answer || active;
+      v.promptMeta.hidden = !raw && !(turn.images || []).length;
+      for (const button of [...v.answerMeta.children].slice(2)) button.hidden = active;
       let draft = '', thoughts = ''; const tools = new Map();
       for (const e of eventsByTurn.get(id) || []) {
         const d = e.data || {};
@@ -669,6 +675,7 @@ function render(ctx) {
         const result = tool.result?.content ?? tool.result ?? tool.error ?? '';
         entry(v, 'tool:' + key, toolIcon(name), outcome, name, toolSummary(tool.arguments), 'Arguments\n' + formatTool(tool.arguments ?? {}) + (tool.complete ? '\n\nResult\n' + formatTool(result) : ''), JSON.stringify({arguments: tool.arguments, result: tool.result, error: tool.error}));
       }
+      v.answerMeta.hidden = !turn.answer && !draft;
       const waiting = active && !turn.answer && !draft, working = waiting && status !== 'queued' && !v.entries.size;
       v.answer.classList.toggle('working', working);
       if (working || !(turn.answer || draft)) { v.answer.md = null; text(v.answer, working ? 'Working' : ''); }
@@ -729,10 +736,8 @@ async function snapshot(ctx) {
   ctx.turns = data.turns || []; ctx.ready = true;
   acceptPlan(ctx, data.plan);
   for (const e of data.events || []) { ctx.events.set(e.seq, e); ctx.after = Math.max(ctx.after, e.seq); }
-  text($('title'), data.session.handle ? '@' + data.session.handle + ' · ' + data.session.title : data.session.title || 'Untitled conversation');
+  showSession(ctx, data.session);
   if (document.activeElement !== $('model')) $('model').value = data.session.model;
-  const i = sessions.findIndex(s => String(s.id) === ctx.id);
-  if (i >= 0) sessions[i] = data.session; else sessions.unshift(data.session);
   ctx.approvalCount = (data.approvals || []).length;
   renderSessions(); render(ctx); renderApprovals(data.approvals || []);
 }
@@ -800,7 +805,7 @@ function selectSession(id) {
   $('prompt').value = drafts.get(id || 'new') || ''; grow(); drawDraftImages();
   $('turns').replaceChildren(); turnNodes.clear();
   openSidebar(false);
-  text($('title'), id ? 'Loading…' : 'New conversation');
+  text($('title'), id ? 'Loading…' : 'New conversation'); document.title = 'Chat';
   text($('context-label'), '');
   $('empty').hidden = Boolean(id); controls(); renderSessions();
   if (id) { context = {id, controller:new AbortController(), events:new Map(), turns:[], after:0, active:false, ready:false, timer:null}; status('Connecting…', 'wait'); stream(context); }
@@ -863,6 +868,23 @@ $('auth').querySelector('form').onsubmit = event => {
 };
 for (const button of document.querySelectorAll('[data-close]')) button.onclick = () => button.closest('dialog').close();
 for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+$('rename-session').onclick = () => {
+  if (!context?.session) return;
+  const field = $('rename-name'); field.value = context.session.title; text($('rename-error'), '');
+  $('rename-dialog').showModal(); field.focus(); field.select();
+};
+$('rename-form').onsubmit = async event => {
+  event.preventDefault();
+  const ctx = context, input = $('rename-name'), save = $('rename-save'), title = input.value.trim();
+  if (!ctx || save.disabled) return;
+  if (!title) { text($('rename-error'), 'Enter a session name.'); input.focus(); return; }
+  save.disabled = true; input.readOnly = true; text($('rename-error'), '');
+  try {
+    const session = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/title', {method:'POST', body:{title}});
+    if (context === ctx) { showSession(ctx, session); render(ctx); $('rename-dialog').close(); }
+  } catch (e) { text($('rename-error'), e.message); }
+  finally { save.disabled = false; input.readOnly = false; }
+};
 $('open-settings').onclick = () => $('settings-dialog').showModal();
 $('change-token').onclick = () => { $('settings-dialog').close(); $('auth').hidden = false; $('token').focus(); };
 $('context-button').onclick = () => { if (!selected) return; $('context-dialog').showModal(); loadContext(); };
@@ -905,7 +927,7 @@ document.addEventListener('keydown', event => {
 });
 $('composer').onsubmit = async event => {
   event.preventDefault();
-  const prompt = $('prompt').value.trim();
+  const prompt = expandRefs($('prompt').value.trim());
   const images = draftImages();
   if ((!prompt && !images.length) || sending || !config || (context && !context.ready)) return;
   sending = true; controls(); renderSessions(); notice();

@@ -18,7 +18,7 @@ const sessions = [
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12"><script>window.svgRan=true</script><rect width="12" height="12"/></svg>';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
 const turns: any[] = [
-  {id: 't1', kind: 'turn', prompt: 'List the files in the workspace.', status: 'done', answer: 'There are two files: `AGENTS.md` and `notes.txt`.', created_at: now - 590, finished_at: now - 585, images:[{name:'diagram.svg', ordinal:0, mime:'image/svg+xml', digest:'svg'}, {name:'dot.png', ordinal:1, mime:'image/png', digest:'png'}]},
+  {id: 't1', kind: 'turn', prompt: 'List the files in the workspace.', status: 'done', answer: 'There are two files: `AGENTS.md` and `notes.txt`.\n\n| File | State |\n| --- | --- |\n| notes.txt | **OK** |\n\n<b>literal HTML</b>', created_at: now - 590, finished_at: now - 585, images:[{name:'diagram.svg', ordinal:0, mime:'image/svg+xml', digest:'svg'}, {name:'dot.png', ordinal:1, mime:'image/png', digest:'png'}]},
   {id: 't2', kind: 'compact', prompt: '', status: 'done', answer: JSON.stringify({success: true, messagesRemoved: 6, tokensRemoved: 4210}), created_at: now - 500},
   {id: 't3', kind: 'turn', prompt: 'Write a short summary to summary.md. [[message:s1:t1:answer]]', sender_id:'s2', sender_handle:'build', status: 'running', answer: '', created_at: now - 30},
 ];
@@ -35,18 +35,21 @@ let emitPlan = () => {};
 const calls: string[] = [];
 const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async fetch(request) {
   const url = new URL(request.url), path = url.pathname;
+  if (path === '/vendor/markdown-it.min.js') return new Response(Bun.file(resolve(import.meta.dir, '../static/vendor/markdown-it.min.js')), {headers:{'Content-Type':'text/javascript'}});
   if (path === '/') return new Response(html, {headers: {'Content-Type': 'text/html'}});
   if (request.headers.get('authorization') !== 'Bearer ' + token) return new Response('{}', {status: 401});
   calls.push(request.method + ' ' + path);
   const json = (value: unknown) => Response.json(value);
   if (path === '/api/config') return json({models, skills: ['memento'], mcp_servers: ['memento'], working_directory: '/srv/workspace', auth_source: 'Copilot CLI login'});
   if (path === '/api/sessions' && request.method === 'GET') return json(sessions);
+  if (path === '/api/sessions/s1/title' && request.method === 'POST') { const value = await request.json() as {title:string}; sessions[0].title = value.title; return json(sessions[0]); }
   if (path === '/api/sessions/s1') return json({session: sessions[0], turns, events, approvals, plan});
   if (path === '/api/sessions/s1/turns/t1/images/0') return new Response(svg, {headers:{'Content-Type':'image/svg+xml'}});
   if (path === '/api/sessions/s1/turns/t1/images/1') return new Response(png, {headers:{'Content-Type':'image/png'}});
   if (path === '/api/sessions/s1/timeline') return json(url.searchParams.get('after') === '0' ? {events:events.slice(0,2),next_after:2} : {events:events.slice(2),next_after:null});
   if (path === '/api/sessions/s1/turns' && request.method === 'POST') {
     const body = await request.json() as any;
+    if (body.prompt !== '[[message:s1:t1:answer]]') return new Response('{}', {status:422});
     if (body.images?.[0]?.data !== Buffer.from(svg).toString('base64')) return new Response('{}', {status:422});
     const turn = {id:'upload', prompt:body.prompt, status:'queued', created_at:now, images:[turns[0].images[0]]};
     turns.push(turn); return json(turn);
@@ -161,27 +164,36 @@ try {
     if (await page.evaluate(() => (window as any).svgRan)) throw new Error('SVG script ran');
     await page.getByText('@build',{exact:true}).waitFor();
     const first = page.locator('#message-t1');
+    await first.locator('.answer table strong').getByText('OK').waitFor();
+    if (await first.locator('.answer b').count()) throw new Error('Raw HTML was rendered');
+    const slots = await first.locator('.message-meta').evaluateAll(rows => rows.map(row => [row.firstElementChild?.textContent,row.children[1]?.querySelector('time')?.dateTime]));
+    if (slots[0][0] !== 'You' || slots[1][0] !== '@review' || slots.some(row => !row[1])) throw new Error('Name must precede timestamp');
+    await page.getByRole('button',{name:'Rename session'}).click(); await page.locator('#rename-name').fill('Review notes');
+    await page.getByRole('button',{name:'Save',exact:true}).click();
+    await page.locator('#title').filter({hasText:'@review · Review notes'}).waitFor();
+    await page.locator('#sessions button').filter({hasText:'@review · Review notes'}).waitFor();
     for (const t of await first.locator('time').all()) if (!await t.getAttribute('datetime')) throw new Error('Missing timestamp');
     await first.getByRole('button',{name:'Copy answer'}).focus(); await page.keyboard.press('Enter');
     if (!(await page.evaluate(() => navigator.clipboard.readText())).includes('AGENTS.md')) throw new Error('Copy failed');
     await first.getByRole('button',{name:'Reference answer'}).focus(); await page.keyboard.press('Enter');
-    if (!(await page.locator('#prompt').inputValue()).includes('[[message:s1:t1:answer]]')) throw new Error('Missing reference');
+    if (!(await page.locator('#prompt').inputValue()).includes('#t1a')) throw new Error('Missing reference');
     for (const name of ['Copy answer','Reference answer']) {
       await first.getByRole('button',{name}).locator('svg').waitFor();
     }
     await page.locator('#prompt').fill(''); await first.locator('.message-time').last().click();
-    if (!(await page.locator('#prompt').inputValue()).includes('[[message:s1:t1:answer]]')) throw new Error('Timestamp did not reference answer');
+    if (!(await page.locator('#prompt').inputValue()).includes('#t1a')) throw new Error('Timestamp did not reference answer');
     await page.getByRole('link',{name:'View referenced answer'}).focus(); await page.keyboard.press('Enter');
     if (!await first.locator('.answer').evaluate(el => el === document.activeElement)) throw new Error('Reference did not focus target');
     if (await page.locator('.topbar #timeline-button').count()) throw new Error('Event log is a diagnostic');
     await page.locator('#open-settings').click(); await page.getByRole('button',{name:'Session event log'}).click(); await page.getByRole('button',{name:'Load more events'}).click();
     await page.getByText('#4 · tool.execution_start').waitFor(); await page.keyboard.press('Escape');
     await page.locator('#open-settings').click(); await page.locator('#theme').selectOption('dark'); await page.keyboard.press('Escape');
-    await page.locator('#prompt').fill('');
+    await page.locator('#prompt').fill('#t1a');
     await page.locator('#image-input').setInputFiles({name:'diagram.svg',mimeType:'image/svg+xml',buffer:Buffer.from(svg)});
     await page.getByRole('button',{name:'Remove diagram.svg'}).waitFor(); await page.locator('#send').click();
     await page.locator('#message-upload img').waitFor();
     await page.reload(); await page.locator('#message-upload img').waitFor();
+    await page.locator('#title').filter({hasText:'@review · Review notes'}).waitFor();
     if (await page.locator('html').getAttribute('data-theme') !== 'dark') throw new Error('Theme not preserved');
   });
   await run('Plan panel: live updates, focus, session separation and narrow layout', {width:390,height:780}, 'light', async page => {

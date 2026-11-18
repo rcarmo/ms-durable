@@ -29,6 +29,10 @@ class SessionInput(BaseModel):
     handle: str | None = Field(default=None, max_length=33)
 
 
+class RenameInput(BaseModel):
+    title: str = Field(min_length=1, max_length=100)
+
+
 class TurnInput(BaseModel):
     prompt: str = Field(max_length=200_000)
     request_id: str = Field(min_length=1, max_length=200)
@@ -106,7 +110,7 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
         response.headers.setdefault(
             "Content-Security-Policy",
             (
-                "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' blob: data:; frame-ancestors 'none'; base-uri 'none'"
+                "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' blob: data:; frame-ancestors 'none'; base-uri 'none'"
             ),
         )
         return response
@@ -114,6 +118,10 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
     @app.get("/")
     async def index():
         return FileResponse(STATIC / "index.html")
+
+    @app.get("/vendor/markdown-it.min.js", include_in_schema=False)
+    async def markdown_bundle():
+        return FileResponse(STATIC / "vendor" / "markdown-it.min.js", media_type="text/javascript")
 
     @app.get("/api/health", dependencies=[Depends(auth)])
     async def health():
@@ -147,6 +155,16 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
             return await app.state.store.create_session(value.title, value.model, value.handle)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from None
+
+    @app.post("/api/sessions/{sid}/title", dependencies=[Depends(auth)])
+    async def rename_session(sid: str, value: RenameInput):
+        title = value.title.strip()
+        if not title:
+            raise HTTPException(422, "Enter a session name")
+        try:
+            return await app.state.store.rename_session(sid, title)
+        except KeyError:
+            raise HTTPException(404, "Unknown session") from None
 
     @app.get("/api/sessions/{sid}", dependencies=[Depends(auth)])
     async def session(sid: str):

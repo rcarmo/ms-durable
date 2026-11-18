@@ -197,3 +197,26 @@ async def test_agent_plan_is_atomic_and_session_scoped(store, tmp_path):
         assert (await reopened.snapshot(sid))["plan"] == second
     finally:
         await reopened.close()
+
+
+def test_rename_session_preserves_identity(tmp_path):
+    settings = Settings(data=tmp_path, access_token="fixture")
+    with TestClient(
+        create_app(settings, QueueOnly), headers={"Authorization": "Bearer fixture"}
+    ) as client:
+        session = client.post(
+            "/api/sessions", json={"model": "mock", "title": "Old", "handle": "review"}
+        ).json()
+        path = f"/api/sessions/{session['id']}"
+        assert client.post(path + "/title", json={"title": "   "}).status_code == 422
+        assert client.post("/api/sessions/missing/title", json={"title": "New"}).status_code == 404
+        assert client.post(path + "/title", json={"title": " New "}).json() == {
+            **session,
+            "title": "New",
+        }
+        snapshot = client.get(path).json()
+        assert (
+            snapshot["session"]["title"] == "New"
+            and snapshot["events"][0]["type"] == "app.session_renamed"
+        )
+        assert client.get("/vendor/markdown-it.min.js").status_code == 200
