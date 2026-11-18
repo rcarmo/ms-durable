@@ -58,7 +58,7 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   if (['/media/preview/abcdef','/media/preview/123456'].includes(path)) return new Response(png, {headers:{'Content-Type':'image/png'}});
   if (path === '/api/sessions' && request.method === 'GET') return json(sessions);
   if (path === '/api/sessions/s1/summary') return json({text:'Reviewed the release files.',model:'gpt-5.6-luna'});
-  if (path === '/api/sessions/s1/title' && request.method === 'POST') { const value = await request.json() as {title:string,handle:string}; Object.assign(sessions[0],value); return json(sessions[0]); }
+  if (path === '/api/sessions/s1/title' && request.method === 'POST') { const value = await request.json() as {title:string,handle:string,delegation_enabled:boolean}; Object.assign(sessions[0],value); return json(sessions[0]); }
   if (path === '/api/sessions/s1') return json({session: sessions[0], turns, events, approvals, plan});
   if (path === '/media/s1/t1/0') return new Response(svg, {headers:{'Content-Type':'image/svg+xml'}});
   if (path === '/media/s1/t1/1') return new Response(png, {headers:{'Content-Type':'image/png'}});
@@ -239,9 +239,13 @@ try {
     if (slots[0][0] !== 'You' || slots[1][0] !== '@review' || slots.some(row => !row[1])) throw new Error('Name must precede timestamp');
     await page.getByRole('button',{name:'Rename session'}).click(); await page.locator('#rename-name').fill('Review notes'); await page.locator('#rename-handle').fill('notes');
     await page.getByText('Reviewed the release files.').waitFor();
+    await page.getByLabel('Allow other agents to delegate tasks to this session').check();
     await page.getByRole('button',{name:'Save',exact:true}).click();
     await page.locator('#title').filter({hasText:'@notes · Review notes'}).waitFor();
     await page.locator('#sessions .session-select').filter({hasText:'@notes · Review notes'}).waitFor();
+    await page.getByRole('button',{name:'Rename session'}).click();
+    if (!(await page.locator('#delegate-enabled').isChecked())) throw new Error('Delegation opt-in did not persist');
+    await page.getByRole('button',{name:'Cancel',exact:true}).click();
     for (const t of await first.locator('time').all()) if (!await t.getAttribute('datetime')) throw new Error('Missing timestamp');
     await first.getByRole('button',{name:'Copy answer'}).focus(); await page.keyboard.press('Enter');
     if (!(await page.evaluate(() => navigator.clipboard.readText())).includes('AGENTS.md')) throw new Error('Copy failed');

@@ -31,6 +31,13 @@ class Settings:
             if p
         ]
     )
+    agent_directories: list[str] = field(
+        default_factory=lambda: [
+            str(Path(p).resolve())
+            for p in os.getenv("MS_DURABLE_AGENTS", "").split(os.pathsep)
+            if p
+        ]
+    )
     model: str = field(default_factory=lambda: os.getenv("MS_DURABLE_MODEL", ""))
     access_token: str = field(default_factory=lambda: os.getenv("MS_DURABLE_TOKEN", ""))
     providers_file: Path | None = field(

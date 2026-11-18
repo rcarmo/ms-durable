@@ -397,7 +397,7 @@ class Runtime:
 
         async def sessions(args):
             return await self.store.rows(
-                "SELECT id,title,model,created_at,handle FROM sessions ORDER BY created_at DESC"
+                "SELECT id,title,model,created_at,handle,delegation_enabled FROM sessions ORDER BY created_at DESC"
             )
 
         async def observe(args):
@@ -473,8 +473,10 @@ class Runtime:
                     "SELECT sender_id,kind FROM turns WHERE id=? AND session_id=?",
                     (active_id, own_sid),
                 )
-                if turn and turn["kind"] == "chat_reply":
-                    raise ValueError("A chat reply cannot start another chat request")
+                if turn and turn["kind"] in {"chat_reply", "delegation"}:
+                    raise ValueError(
+                        "A chat reply or delegated turn cannot start another chat request"
+                    )
                 if turn and turn["sender_id"]:
                     raise ValueError(
                         "This turn received a chat request; use reply_chat to reply to its sender"
@@ -502,7 +504,7 @@ class Runtime:
             )
             if (
                 not turn
-                or turn["kind"] == "chat_reply"
+                or turn["kind"] in {"chat_reply", "delegation"}
                 or not turn["sender_id"]
                 or turn["sender_id"] == own_sid
             ):
@@ -525,6 +527,111 @@ class Runtime:
                 ),
             )
             return {"id": result["id"], "status": result["status"]}
+
+        async def delegate(args):
+            parent = self.active.get(own_sid)
+            if not await self.store.one(
+                "SELECT 1 FROM turns WHERE id=? AND session_id=? AND status='running' AND sender_id IS NULL AND kind='prompt'",
+                (parent, own_sid),
+            ):
+                raise ValueError(
+                    "Delegation requires a user-started turn; nested delegation is not allowed"
+                )
+            jobs, request_id = args["tasks"], args["request_id"].strip()
+            timeout = args.get("timeout_seconds", 120)
+            if (
+                not 1 <= len(jobs) <= 4
+                or not 1 <= len(request_id) <= 100
+                or not 1 <= timeout <= 600
+            ):
+                raise ValueError(
+                    "Expected 1–4 tasks, a stable request ID and a deadline of 1–600 seconds"
+                )
+            labels = [job["session_id"].strip() for job in jobs]
+            prompts = [self.redact(job["prompt"].strip()) for job in jobs]
+            if any(not label for label in labels) or any(
+                not 1 <= len(prompt) <= 20_000 for prompt in prompts
+            ):
+                raise ValueError("Each task needs a target and a prompt of 1–20,000 characters")
+            targets = []
+            for label in labels:
+                try:
+                    targets.append((await self.store.resolve_session(label))["id"])
+                except (KeyError, ValueError):
+                    targets.append(None)
+            resolved = [sid for sid in targets if sid is not None]
+            if own_sid in resolved or len(resolved) != len(set(resolved)):
+                raise ValueError("Choose distinct delegate sessions other than the current session")
+
+            async def run(label, sid, prompt):
+                result = {"session_id": label}
+                if sid is None:
+                    return {**result, "status": "unavailable", "error": "Unknown session"}
+                key = f"delegate:{parent}:{request_id}"
+                try:
+                    turn = await self.enqueue(
+                        sid,
+                        prompt,
+                        key,
+                        kind="delegation",
+                        sender_id=own_sid,
+                        outgoing=(parent, self.redact(label), prompt),
+                    )
+                except (ValueError, KeyError) as exc:
+                    return {**result, "status": "unavailable", "error": str(exc)}
+                tid = turn["id"]
+                try:
+                    async with asyncio.timeout(timeout):
+                        while True:
+                            row = await self.store.one(
+                                "SELECT status,answer,error FROM turns WHERE id=?", (tid,)
+                            )
+                            if row is None:
+                                return {
+                                    **result,
+                                    "turn_id": tid,
+                                    "status": "unavailable",
+                                    "error": "Turn was deleted",
+                                }
+                            if row["status"] not in {"queued", "running"}:
+                                answer = row["answer"] or ""
+                                return {
+                                    **result,
+                                    "turn_id": tid,
+                                    "status": row["status"],
+                                    "answer": answer[:16_000],
+                                    "truncated": len(answer) > 16_000,
+                                    "error": row["error"],
+                                }
+                            await asyncio.sleep(0.2)
+                except (TimeoutError, asyncio.CancelledError) as exc:
+                    async with self.store.transaction() as db:
+                        updated = await db.execute(
+                            "UPDATE turns SET status='cancelled', error='Caller stopped waiting.' WHERE id=? AND status='queued'",
+                            (tid,),
+                        )
+                        if updated.rowcount:
+                            await db.execute(
+                                "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
+                                (sid, tid, "app.turn_settled", "{}"),
+                            )
+                    if isinstance(exc, asyncio.CancelledError):
+                        raise
+                    return {
+                        **result,
+                        "turn_id": tid,
+                        "status": "timeout",
+                        "error": "Wait expired; work that already started may still finish in the delegate timeline.",
+                    }
+
+            return {
+                "results": await asyncio.gather(
+                    *(
+                        run(label, sid, prompt)
+                        for label, sid, prompt in zip(labels, targets, prompts, strict=True)
+                    )
+                )
+            }
 
         async def model(args):
             # Applied when the next turn starts, using native SDK set_model.
@@ -675,6 +782,27 @@ class Runtime:
                 {"prompt": string},
                 ["prompt"],
                 reply,
+            ),
+            make(
+                "delegate_to_sessions",
+                "Run tasks in up to four distinct idle, opted-in sessions in parallel. Wait for their final answers in this turn. Use a unique request_id per batch and reuse it only to retry the same tasks. Delegates cannot send chat or delegate again.",
+                {
+                    "tasks": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 4,
+                        "items": {
+                            "type": "object",
+                            "properties": {"session_id": string, "prompt": string},
+                            "required": ["session_id", "prompt"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "request_id": string,
+                    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
+                },
+                ["tasks", "request_id"],
+                delegate,
             ),
             make(
                 "set_model",
@@ -848,6 +976,10 @@ class Runtime:
                 tools={"definitions": self.tools(sid)},
                 skills={"enabled": True, "directories": self.settings.skill_directories},
                 mcp={"servers": self.mcp_servers},
+                agents={
+                    "directories": self.settings.agent_directories,
+                    "local_discovery_only": True,
+                },
                 enable_config_discovery=False,
                 instructions={"skip_custom_instructions": False},
                 hooks={"enable_repository_hooks": False},
@@ -856,7 +988,11 @@ class Runtime:
                     "create_session_fs_provider": lambda session: SQLiteSessionFS(
                         self.store,
                         sid,
-                        [self.settings.working_directory, *self.settings.skill_directories],
+                        [
+                            self.settings.working_directory,
+                            *self.settings.skill_directories,
+                            *self.settings.agent_directories,
+                        ],
                         [
                             self.settings.auth_file,
                             self.store.path,
@@ -996,6 +1132,12 @@ class Runtime:
                         prompt = (
                             "[Reply to a chat request you sent earlier. Use the result below to continue your work or "
                             "report back to the user. This turn cannot start another chat request or send a reply.]\n\n"
+                            + prompt
+                        )
+                    elif turn["kind"] == "delegation":
+                        prompt = (
+                            "[Delegated task. Use your normal tools as needed and put the result in your final answer; "
+                            "it is returned to the caller automatically. Do not send chat or delegate again.]\n\n"
                             + prompt
                         )
                     elif turn["sender_id"]:

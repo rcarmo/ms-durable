@@ -278,6 +278,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
   <header><h2 id="rename-heading">Rename session</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
   <div class="body"><form id="rename-form"><label for="rename-name">Session name</label><input id="rename-name" maxlength="100" required>
     <label for="rename-handle">Agent @name</label><input id="rename-handle" maxlength="33" required>
+    <label><input id="delegate-enabled" type="checkbox"> Allow other agents to delegate tasks to this session</label>
     <p id="rename-summary" class="muted" role="status"></p>
     <p id="rename-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="quiet" data-close>Cancel</button><button id="rename-save" class="primary" type="submit">Save</button></div>
   </form></div>
@@ -785,7 +786,7 @@ function markdown(el, source) {
   addLinkPreviews(el);
 }
 const toolLabels = {
-  plan:'Working on the plan', chat:'Sending a message', reply_chat:'Replying to a message', context:'Checking context usage', compact:'Compacting context',
+  plan:'Working on the plan', chat:'Sending a message', delegate_to_sessions:'Waiting for delegates', reply_chat:'Replying to a message', context:'Checking context usage', compact:'Compacting context',
   list_models:'Listing models', list_sessions:'Listing sessions', observe_session:'Inspecting the session timeline',
   attach_file:'Sharing a file', read_attachment:'Reading an attachment', create_session:'Creating a session', set_model:'Changing the model',
   context_status:'Checking context usage', compact_session:'Compacting context', send_message:'Sending a message',
@@ -882,7 +883,7 @@ function render(ctx) {
       v.state.hidden = true; text(v.error, active ? '' : (turn.error ? format(turn.error) : ''));
     } else {
       v.note.hidden = true;
-      text(v.promptMeta.firstChild, turn.sender_id ? (turn.kind === 'chat_reply' ? 'Reply from ' : '') + (turn.sender_handle ? '@' + turn.sender_handle : 'Agent') : 'You');
+      text(v.promptMeta.firstChild, turn.sender_id ? (turn.kind === 'chat_reply' ? 'Reply from ' : turn.kind === 'delegation' ? 'Delegated by ' : '') + (turn.sender_handle ? '@' + turn.sender_handle : 'Agent') : 'You');
       text(v.answerMeta.firstChild, ctx.session?.handle ? '@' + ctx.session.handle : sessionName(ctx.session));
       const raw = turn.prompt || '';
       if (v.prompt.dataset.raw !== raw) { v.prompt.dataset.raw = raw; markdown(v.prompt, raw); }
@@ -1195,6 +1196,7 @@ $('rename-session').onclick = () => {
   if (!context?.session) return;
   const field = $('rename-name'); field.value = context.session.title; text($('rename-error'), '');
   const ctx = context, dialog = $('rename-dialog');
+  $('delegate-enabled').checked = Boolean(ctx.session.delegation_enabled);
   $('rename-handle').value = ctx.session.handle ? '@' + ctx.session.handle : '@' + (sessionName(ctx.session).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^[^a-z]+|-$|^-+/g,'').slice(0,32) || 'session');
   text($('rename-summary'), config?.summary_model ? 'Summarising recent messages with Luna…' : 'Luna is not available.');
   dialog.showModal(); field.focus(); field.select();
@@ -1213,7 +1215,7 @@ $('rename-form').onsubmit = async event => {
   if (!title) { text($('rename-error'), 'Enter a session name.'); input.focus(); return; }
   save.disabled = true; input.readOnly = true; text($('rename-error'), '');
   try {
-    const session = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/title', {method:'POST', body:{title,handle:$('rename-handle').value.trim()}});
+    const session = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/title', {method:'POST', body:{title,handle:$('rename-handle').value.trim(),delegation_enabled:$('delegate-enabled').checked}});
     if (context === ctx) { showSession(ctx, session); render(ctx); $('rename-dialog').close(); }
   } catch (e) { text($('rename-error'), e.message); }
   finally { save.disabled = false; input.readOnly = false; }

@@ -30,6 +30,9 @@ async def test_native_azure_routing_resume_and_prefix(
     requests = []
     http_disconnected = asyncio.Event()
     release_stalled_response = asyncio.Event()
+    both_delegates_started = asyncio.Event()
+    delegates_started = set()
+    worker_names = ["reviewer", "builder"]
     endpoint = FastAPI()
 
     @endpoint.post("/{path:path}")
@@ -68,6 +71,59 @@ async def test_native_azure_routing_resume_and_prefix(
         }
 
         async def chunks():
+            latest = body["messages"][-1]
+            last = json.dumps(latest)
+            if latest["role"] == "user" and "DELEGATION_PARENT_CALL" in last:
+                arguments = {
+                    "tasks": [
+                        {"session_id": "@" + name, "prompt": "Inspect " + name}
+                        for name in worker_names
+                    ],
+                    "request_id": "native-batch",
+                    "timeout_seconds": 10,
+                }
+                call = {
+                    "index": 0,
+                    "id": "call_delegate_batch",
+                    "type": "function",
+                    "function": {
+                        "name": "delegate_to_sessions",
+                        "arguments": json.dumps(arguments),
+                    },
+                }
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            **chunk,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"role": "assistant", "tool_calls": [call]},
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+                    )
+                    + "\n\n"
+                )
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            **end,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+                        }
+                    )
+                    + "\n\n"
+                )
+                yield "data: [DONE]\n\n"
+                return
+            if "Delegated task." in last:
+                delegates_started.update(name for name in worker_names if "Inspect " + name in last)
+                if len(delegates_started) == 2:
+                    both_delegates_started.set()
+                await asyncio.wait_for(both_delegates_started.wait(), 8)
             yield "data: " + json.dumps(chunk) + "\n\n"
             if "PROJECTION_STALL" in json.dumps(body.get("messages", [])):
                 try:
@@ -298,6 +354,32 @@ async def test_native_azure_routing_resume_and_prefix(
             assert "Reply to a chat request you sent earlier" in inbound
             assert "The delegated build passed." in inbound
 
+            for handle in worker_names:
+                target = await store.create_session(handle, "foundry/test", handle)
+                await store.rename_session(target["id"], handle, handle, True)
+            # Approve the SDK's custom-tool invocation in this isolated test only.
+            pending_parent = await runtime.enqueue(
+                sid, "DELEGATION_PARENT_CALL", "delegation-parent"
+            )
+            async with asyncio.timeout(25):
+                while not runtime.workers[sid].done():
+                    for approval in await store.rows(
+                        "SELECT id FROM approvals WHERE session_id=? AND status='pending'", (sid,)
+                    ):
+                        await runtime.decide(approval["id"], True)
+                    await asyncio.sleep(0.05)
+                await runtime.workers[sid]
+            parent = await store.one("SELECT * FROM turns WHERE id=?", (pending_parent["id"],))
+            assert parent["status"] == "done", parent["error"]
+            assert both_delegates_started.is_set()
+            tool_result = next(
+                m
+                for m in requests[-1]["body"]["messages"]
+                if m.get("tool_call_id") == "call_delegate_batch"
+            )
+            assert all(name in json.dumps(tool_result) for name in worker_names)
+            assert json.dumps(tool_result).count("FOUNDRY_ADAPTER_OK") == 2
+
             original_event = store.event
 
             async def failing_projection(session_id, turn_id, kind, *args, **kwargs):
@@ -329,6 +411,7 @@ async def test_native_azure_routing_resume_and_prefix(
             with pytest.raises(KeyError):
                 await store.session(sid)
     finally:
+        both_delegates_started.set()
         release_stalled_response.set()
         await runtime.close()
         server.should_exit = True

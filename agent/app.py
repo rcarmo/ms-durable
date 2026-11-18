@@ -39,6 +39,7 @@ class SessionInput(BaseModel):
 class RenameInput(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     handle: str = Field(min_length=1, max_length=33)
+    delegation_enabled: bool | None = None
 
 
 class TurnInput(BaseModel):
@@ -199,7 +200,9 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
         if not title:
             raise HTTPException(422, "Enter a session name")
         try:
-            return await app.state.store.rename_session(sid, title, value.handle)
+            return await app.state.store.rename_session(
+                sid, title, value.handle, value.delegation_enabled
+            )
         except KeyError:
             raise HTTPException(404, "Unknown session") from None
 

@@ -37,6 +37,7 @@ Do not restart the server from one of its own active tools. It won't like it.
 | `MS_DURABLE_PROVIDERS_FILE` | Optional server-owned BYOK JSON file |
 | `MS_DURABLE_MCP_FILE` | Optional server-owned MCP JSON file |
 | `MS_DURABLE_SKILLS` | OS-path-separated native skill directories |
+| `MS_DURABLE_AGENTS` | OS-path-separated directories for native Copilot custom agents |
 | `MS_DURABLE_TLS_KEY`, `MS_DURABLE_TLS_CERT` | Optional uvicorn TLS files |
 
 This uses SSE for transport, and I recommend HTTPS for remote access, either directly or through a reverse proxy which forwards streaming responses without buffering .The application does not manage certificates or install a service (again, designed to run in Azure PaaS or with an App Gateway in front).
@@ -69,6 +70,14 @@ Application tools are visible to every application session:
 These tools refer only to this application's database. A stable `request_id` deduplicates a submitted prompt or compaction request; reusing it with different content fails.
 
 Native permission requests are shown in the UI. Read requests are approved once automatically. Other requests wait for an explicit approval or denial. Approve for this session remembers a matching request in that chat until the server restarts. Settings can disable prompts globally; that setting persists. Copilot can execute commands it classifies as safe without issuing a host permission request; for example, a plain `printf` did not require approval in the browser test. This is not an “approve every shell command” policy.
+
+### Delegation
+
+Use Copilot’s native subagents for work that does not need another session’s history. Point `MS_DURABLE_AGENTS` at trusted directories containing Copilot `.agent.md` definitions to add native specialists. The SDK manages their execution.
+
+To reuse a named session’s history, open **Rename session** on the target and enable **Allow other agents to delegate tasks to this session**. In a user-started turn, `delegate_to_sessions` accepts `tasks: [{session_id, prompt}, …]` and a `request_id`. It runs up to four distinct idle targets concurrently and returns their final answers in input order to the caller’s current turn. No `reply_chat` is needed. Use a new request ID per batch; retry the same tasks with the same ID. Normal tool approvals still apply.
+
+The default wait is 120 seconds (`timeout_seconds`: 1–600). Busy, disabled, failed and timed-out targets are reported individually. On timeout or cancellation, queued work is cancelled; work that already started can finish in its own timeline. Delegated turns cannot use app `chat`, `reply_chat` or `delegate_to_sessions`. Queued delegations are not replayed after a restart.
 
 ## Azure Foundry / Azure OpenAI
 

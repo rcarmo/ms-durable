@@ -142,6 +142,10 @@ CREATE TABLE IF NOT EXISTS sdk_files(
         await self.db.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS session_handle ON sessions(handle)"
         )
+        if "delegation_enabled" not in {row["name"] for row in columns}:
+            await self.db.execute(
+                "ALTER TABLE sessions ADD COLUMN delegation_enabled INTEGER NOT NULL DEFAULT 0"
+            )
         if not await self.one("SELECT 1 FROM sqlite_schema WHERE name='turn_fts'"):
             try:
                 await self.db.executescript(TIMELINE_FTS)
@@ -151,6 +155,9 @@ CREATE TABLE IF NOT EXISTS sdk_files(
         # Never re-send an ambiguous admitted prompt or replay an unknown external effect.
         await self.db.execute(
             "UPDATE turns SET status='interrupted',error='Server stopped during this turn; inspect history before continuing.' WHERE status='running'"
+        )
+        await self.db.execute(
+            "UPDATE turns SET status='cancelled', error='Delegating turn stopped before delivery.' WHERE kind='delegation' AND status='queued'"
         )
         await self.db.execute("UPDATE approvals SET status='expired' WHERE status='pending'")
 
@@ -194,7 +201,7 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             raise ValueError("Agent name already exists") from None
         return await self.session(sid)
 
-    async def rename_session(self, sid, title, handle):
+    async def rename_session(self, sid, title, handle, delegation_enabled=None):
         handle = self.normalize_handle(handle)
         async with self.transaction() as db:
             cursor = await db.execute("SELECT * FROM sessions WHERE id=?", (sid,))
@@ -202,18 +209,34 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             if previous is None:
                 raise KeyError("Unknown session")
             session = dict(previous)
-            if (session["title"], session["handle"]) != (title, handle):
+            enabled = (
+                session["delegation_enabled"]
+                if delegation_enabled is None
+                else int(delegation_enabled)
+            )
+            if (session["title"], session["handle"], session["delegation_enabled"]) != (
+                title,
+                handle,
+                enabled,
+            ):
                 try:
                     await db.execute(
-                        "UPDATE sessions SET title=?,handle=? WHERE id=?", (title, handle, sid)
+                        "UPDATE sessions SET title=?,handle=?,delegation_enabled=? WHERE id=?",
+                        (title, handle, enabled, sid),
                     )
                 except aiosqlite.IntegrityError:
                     raise ValueError("Agent name already exists") from None
                 await db.execute(
                     "INSERT INTO events(session_id,type,data) VALUES(?,?,?)",
-                    (sid, "app.session_renamed", json.dumps({"title": title, "handle": handle})),
+                    (
+                        sid,
+                        "app.session_renamed",
+                        json.dumps(
+                            {"title": title, "handle": handle, "delegation_enabled": enabled}
+                        ),
+                    ),
                 )
-                session.update(title=title, handle=handle)
+                session.update(title=title, handle=handle, delegation_enabled=enabled)
             return session
 
     async def cached_preview(self, url, scope):
@@ -323,8 +346,37 @@ CREATE TABLE IF NOT EXISTS sdk_files(
         self, sid, prompt, request_id, kind="prompt", *, images=(), sender_id=None, outgoing=None
     ):
         async with self.transaction() as db:
-            if not await (await db.execute("SELECT 1 FROM sessions WHERE id=?", (sid,))).fetchone():
+            session = await (
+                await db.execute("SELECT delegation_enabled FROM sessions WHERE id=?", (sid,))
+            ).fetchone()
+            if session is None:
                 raise KeyError("Unknown session")
+            if kind == "delegation":
+                if not outgoing or not sender_id or sender_id == sid:
+                    raise ValueError("Delegation requires a different, active caller")
+                parent = outgoing[0]
+                if not await (
+                    await db.execute(
+                        "SELECT 1 FROM turns WHERE id=? AND session_id=? AND status='running' AND sender_id IS NULL AND kind='prompt'",
+                        (parent, sender_id),
+                    )
+                ).fetchone():
+                    raise ValueError("Delegating turn is no longer active")
+                existing = await (
+                    await db.execute(
+                        "SELECT 1 FROM turns WHERE session_id=? AND request_id=?", (sid, request_id)
+                    )
+                ).fetchone()
+                if not existing:
+                    if not session["delegation_enabled"]:
+                        raise ValueError("Session has not opted in to delegation")
+                    if await (
+                        await db.execute(
+                            "SELECT 1 FROM turns WHERE session_id=? AND status IN ('queued','running') LIMIT 1",
+                            (sid,),
+                        )
+                    ).fetchone():
+                        raise ValueError("Session is busy")
             insert = await db.execute(
                 "INSERT OR IGNORE INTO turns(id,session_id,request_id,prompt,status,created_at,kind,sender_id) "
                 "VALUES(?,?,?,?, 'queued',?,?,?)",

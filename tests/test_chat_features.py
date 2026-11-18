@@ -435,6 +435,75 @@ async def test_named_chat_is_deduplicated_and_one_hop(store, tmp_path, monkeypat
     assert len((await store.snapshot(bob))["sent_messages"]) == 1
 
 
+async def test_delegate_batch_overlaps_and_returns_partial_results(store, tmp_path, monkeypatch):
+    runtime = Runtime(Settings(data=tmp_path), store)
+    kicked = []
+    monkeypatch.setattr(runtime, "kick", kicked.append)
+    ids = {
+        name: (await store.create_session(name, "mock", name))["id"]
+        for name in ("parent", "review", "build", "busy", "private")
+    }
+    for name in ("review", "build", "busy"):
+        await store.rename_session(ids[name], name, name, True)
+    await store.submit(ids["busy"], "Existing work", "busy")
+    parent = await store.submit(ids["parent"], "Task", "parent")
+    await store.execute("UPDATE turns SET status='running' WHERE id=?", (parent["id"],))
+    runtime.active[ids["parent"]] = parent["id"]
+
+    async def invoke(sid, name, **args):
+        tool = next(t for t in runtime.tools(sid) if t.name == name)
+        return json.loads((await tool.handler(SimpleNamespace(arguments=args))).text_result_for_llm)
+
+    async def batch(*names, key="one", timeout=4):
+        return (
+            await invoke(
+                ids["parent"],
+                "delegate_to_sessions",
+                request_id=key,
+                timeout_seconds=timeout,
+                tasks=[{"session_id": name, "prompt": "Inspect " + name} for name in names],
+            )
+        )["results"]
+
+    call = asyncio.create_task(batch("@review", "@build", "@busy", "@private"))
+    try:
+        async with asyncio.timeout(2):
+            while len(kicked) < 2:
+                await asyncio.sleep(0.01)
+        assert set(kicked) == {ids["review"], ids["build"]}
+        assert not call.done()
+        rows = await store.rows("SELECT * FROM turns WHERE kind='delegation'")
+        assert len(rows) == 2
+        for row in rows:
+            sid = row["session_id"]
+            runtime.active[sid] = row["id"]
+            await store.execute("UPDATE turns SET status='running' WHERE id=?", (row["id"],))
+            with pytest.raises(ValueError, match="nested delegation"):
+                await invoke(sid, "delegate_to_sessions", request_id="nested", tasks=[])
+            with pytest.raises(ValueError, match="cannot start another chat"):
+                await invoke(sid, "chat", session_id="@parent", request_id="nested", prompt="Hello")
+            with pytest.raises(ValueError, match="active inter-session"):
+                await invoke(sid, "reply_chat", prompt="Hello")
+            await store.execute(
+                "UPDATE turns SET status='done',answer=? WHERE id=?", (sid, row["id"])
+            )
+        result = await call
+    finally:
+        if not call.done():
+            call.cancel()
+            await asyncio.gather(call, return_exceptions=True)
+    assert [item["status"] for item in result] == ["done", "done", "unavailable", "unavailable"]
+    assert [item["answer"] for item in result[:2]] == [ids["review"], ids["build"]]
+    assert "busy" in result[2]["error"] and "opted in" in result[3]["error"]
+    assert await batch("@review", "@build") == result[:2]
+    with pytest.raises(ValueError, match="distinct"):
+        await batch("@review", ids["review"])
+    (expired,) = await batch("@build", key="timeout", timeout=1)
+    assert expired["status"] == "timeout"
+    row = await store.one("SELECT status FROM turns WHERE id=?", (expired["turn_id"],))
+    assert row["status"] == "cancelled"
+
+
 async def test_model_can_inspect_timeline_and_attachments(store, tmp_path):
     runtime = Runtime(Settings(data=tmp_path), store)
     sid = (await store.create_session("Review", "mock", "review"))["id"]
