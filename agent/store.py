@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS events(
  turn_id TEXT, sdk_id TEXT, type TEXT NOT NULL, data TEXT NOT NULL,
  UNIQUE(session_id,sdk_id));
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);
+CREATE INDEX IF NOT EXISTS chat_sent_session ON events(session_id,seq) WHERE type='app.chat_sent';
 CREATE INDEX IF NOT EXISTS turns_session_recent ON turns(session_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS pending_turns ON turns(session_id,status) WHERE status IN ('queued','running');
 CREATE TABLE IF NOT EXISTS approvals(
@@ -318,7 +319,9 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             raise KeyError("Unknown agent")
         return row
 
-    async def submit(self, sid, prompt, request_id, kind="prompt", *, images=(), sender_id=None):
+    async def submit(
+        self, sid, prompt, request_id, kind="prompt", *, images=(), sender_id=None, outgoing=None
+    ):
         async with self.transaction() as db:
             if not await (await db.execute("SELECT 1 FROM sessions WHERE id=?", (sid,))).fetchone():
                 raise KeyError("Unknown session")
@@ -356,6 +359,23 @@ CREATE TABLE IF NOT EXISTS sdk_files(
                     "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
                     (sid, tid, "app.turn_queued", "{}"),
                 )
+                if outgoing:
+                    source_turn, destination, message = outgoing
+                    await db.execute(
+                        "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
+                        (
+                            sender_id,
+                            source_turn,
+                            "app.chat_sent",
+                            json.dumps(
+                                {
+                                    "destination": destination,
+                                    "message": message,
+                                    "turn_id": tid,
+                                }
+                            ),
+                        ),
+                    )
             return result
 
     async def event(self, sid, tid, kind, data, sdk_id=None):
@@ -530,6 +550,13 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             "session": session,
             "turns": turns,
             "events": await self.events(sid),
+            "sent_messages": [
+                {**row, "data": json.loads(row["data"])}
+                for row in await self.rows(
+                    "SELECT seq,turn_id,type,data FROM events WHERE session_id=? AND type='app.chat_sent' ORDER BY seq",
+                    (sid,),
+                )
+            ],
             "plan": await self.plan(sid),
             "approvals": await self.rows(
                 "SELECT id,request,status FROM approvals WHERE session_id=? AND status='pending'",

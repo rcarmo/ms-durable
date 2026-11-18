@@ -476,7 +476,15 @@ class Runtime:
             if not prompt or len(prompt) > 200_000 or not request_id or len(request_id) > 200:
                 raise ValueError("Invalid chat message or request ID")
             return await self.enqueue(
-                target["id"], prompt, f"agent:{own_sid}:{request_id}", sender_id=own_sid
+                target["id"],
+                prompt,
+                f"agent:{own_sid}:{request_id}",
+                sender_id=own_sid,
+                outgoing=(
+                    active_id,
+                    self.redact("@" + target["handle"] if target["handle"] else target["title"]),
+                    self.redact(prompt),
+                ),
             )
 
         async def model(args):

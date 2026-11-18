@@ -33,7 +33,7 @@ const pendingApproval = {id: 'p1', status: 'pending', request: JSON.stringify({k
 let approvals = [pendingApproval];
 let linkPreviews = {enabled:false,any_domain:false};
 const plan = {revision:1, explanation:'Release checklist', items:[{step:'Inspect',status:'in_progress'}]};
-let emitPlan = () => {};
+let emitPlan = () => {}, emitChat = () => {};
 const calls: string[] = [];
 const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async fetch(request) {
   const url = new URL(request.url), path = url.pathname;
@@ -75,6 +75,7 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   if (path === '/api/sessions/s2') return json({session: sessions[1], turns: [], events: [], approvals: []});
   if (path.endsWith('/events')) return new Response(new ReadableStream({start(c) {
     const encode = (s:string) => new TextEncoder().encode(s); c.enqueue(encode(': open\n\n'));
+    if (path.includes('/s1/')) emitChat = () => c.enqueue(encode('data: ' + JSON.stringify({seq:9001, turn_id:'t1', type:'app.chat_sent',data:{destination:'@build',message:'Check the build.'}}) + '\n\n'));
     if (path.includes('/s1/')) emitPlan = () => {
       plan.revision++; plan.items[0].status = 'completed';
       c.enqueue(encode('data: ' + JSON.stringify({seq:5,type:'app.plan_updated',data:plan}) + '\n\n'));
@@ -219,6 +220,10 @@ try {
     await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>('.message-images img')].length === 2 && [...document.querySelectorAll<HTMLImageElement>('.message-images img')].every(i => i.naturalWidth > 0));
     if (await page.evaluate(() => (window as any).svgRan)) throw new Error('SVG script ran');
     await page.getByText('@build',{exact:true}).waitFor();
+    await page.locator('#connection[data-state=live]').waitFor();
+    emitChat();
+    await page.locator('#message-t1 .sent-message').getByText('Sent to @build').waitFor();
+    await page.locator('#message-t1 .sent-message').getByText('Check the build.').waitFor();
     const first = page.locator('#message-t1');
     await first.locator('.answer table strong').getByText('OK').waitFor();
     await page.waitForFunction(() => { const images = [...document.querySelectorAll<HTMLImageElement>('.answer img.inline-svg')]; return images.length === 2 && images.every(img => img.naturalWidth > 0); });

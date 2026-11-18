@@ -383,9 +383,19 @@ async def test_named_chat_is_deduplicated_and_one_hop(store, tmp_path, monkeypat
         )
         return json.loads(result.text_result_for_llm)
 
+    source = await store.submit(alice, "Delegate this", "source")
+    runtime.active[alice] = source["id"]
     message = await send(alice, "@Bob")
     assert (await send(alice, "@bob"))["id"] == message["id"]
     assert (await store.snapshot(bob))["turns"][0]["sender_handle"] == "alice"
+    (sent,) = (await store.snapshot(alice))["sent_messages"]
+    assert sent["turn_id"] == source["id"]
+    assert sent["data"] == {
+        "destination": "@bob",
+        "message": "Check the build",
+        "turn_id": message["id"],
+    }
+    assert not (await store.snapshot(bob))["sent_messages"]
     with pytest.raises(ValueError, match="another app session"):
         await send(alice, "@alice")
     runtime.active[bob] = message["id"]

@@ -175,6 +175,8 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 .shared-file{min-width:0;max-width:100%;border:1px solid var(--border);border-radius:4px;padding:.5rem}
 .shared-file img{--image-height:360px;margin-bottom:.5rem}
 .shared-file button{max-width:100%;overflow-wrap:anywhere;text-align:start}
+.sent-message{border-inline-start:2px solid var(--accent);padding:.4rem .8rem;margin:.5rem 0;background:var(--panel)}
+.sent-message strong{font-size:.85rem}.sent-message p{white-space:pre-wrap;overflow-wrap:anywhere;margin:.25rem 0 0}
 </style>
 </head>
 <body>
@@ -559,8 +561,9 @@ function newTurn(id) {
   root.id = 'message-' + id; root.tabIndex = -1;
   answerMeta.classList.add('answer-meta');
   const files = node('div', 'shared-files');
-  root.append(note, promptMeta, prompt, pictures, activity, answerMeta, answer, files, error, state);
-  return {root, prompt, pictures, promptMeta, answerMeta, answer, files, error, activity, state, stateIcon, stateText, note, entries:new Map()};
+  const sent = node('div', 'sent-messages');
+  root.append(note, promptMeta, prompt, pictures, activity, sent, answerMeta, answer, files, error, state);
+  return {root, prompt, pictures, promptMeta, answerMeta, answer, files, error, activity, sent, state, stateIcon, stateText, note, entries:new Map()};
 }
 function setTheme(value) {
   $('theme').value = value;
@@ -882,15 +885,25 @@ function render(ctx) {
       stamp(v.promptMeta, turn.created_at); stamp(v.answerMeta, turn.finished_at);
       v.promptMeta.hidden = !raw && !(turn.images || []).length;
       for (const button of [...v.answerMeta.children].slice(2)) button.hidden = active;
-      let draft = '', thoughts = ''; const tools = new Map();
+      let draft = '', thoughts = ''; const tools = new Map(), sent = [];
       for (const e of eventsByTurn.get(id) || []) {
         const d = e.data || {};
         if (e.type === 'assistant.message_delta') draft += d.deltaContent || d.delta_content || '';
         if (e.type === 'assistant.reasoning_delta') thoughts += d.deltaContent || d.delta_content || '';
+        if (e.type === 'app.chat_sent') sent.push(e);
         if (e.type === 'tool.execution_start' || e.type === 'tool.execution_complete') {
           const key = String(d.toolCallId ?? d.tool_call_id ?? e.seq), old = tools.get(key) || {};
           tools.set(key, {...old, ...d, complete: e.type === 'tool.execution_complete' || old.complete});
         }
+      }
+      const sentKey = sent.map(e => e.seq).join(',');
+      if (v.sent.dataset.key !== sentKey) {
+        v.sent.dataset.key = sentKey;
+        v.sent.replaceChildren(...sent.map(e => {
+          const card = node('section', 'sent-message');
+          card.append(node('strong', '', 'Sent to ' + e.data.destination), node('p', '', e.data.message));
+          return card;
+        }));
       }
       if (thoughts) entry(v, 'thoughts', active && !draft && !tools.size ? 'running' : 'ok', 'Thinking through the request', thoughts);
       for (const [key, tool] of tools) {
@@ -962,6 +975,8 @@ function applySnapshot(ctx, data, ready = true) {
   ctx.turns = data.turns || []; ctx.ready = ready;
   acceptPlan(ctx, data.plan);
   for (const e of data.events || []) { ctx.events.set(e.seq, e); ctx.after = Math.max(ctx.after, e.seq); }
+  // Extra receipts are sparse; do not jump the SSE cursor past unseen events.
+  for (const e of data.sent_messages || []) ctx.events.set(e.seq, e);
   showSession(ctx, data.session);
   if (document.activeElement !== $('model')) $('model').value = data.session.model;
   ctx.approvalCount = (data.approvals || []).length;
