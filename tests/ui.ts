@@ -32,6 +32,10 @@ const events = [
   {seq: 7, turn_id: 't1', type: 'assistant.reasoning_delta', data: {deltaContent: 'Verify independently.'}},
   {seq: 8, turn_id: 't1', type: 'app.chat_sent', data: {destination:'@old',message:'An older message.'}},
   {seq: 9, turn_id: 't1', type: 'tool.execution_start', data: {toolCallId: 'later', toolName: 'read', arguments: {path:'notes.txt'}}},
+  {seq:10, turn_id:'t1', type:'tool.execution_start', data:{toolCallId:'inspect',toolName:'observe_session',toolTitle:'Inspect timeline',arguments:'{"session_id":"s2","query":"  build\\n log  "}'}},
+  {seq:11, turn_id:'t1', type:'tool.execution_start', data:{toolCallId:'current',toolName:'app_observe_session',arguments:{}}},
+  {seq:12, turn_id:'t1', type:'tool.execution_start', data:{toolCallId:'change',toolName:'set_model',arguments:{session_id:'s1',model:'gpt-5-mini'}}},
+  {seq:13, turn_id:'t1', type:'tool.execution_start', data:{toolCallId:'workers',toolName:'delegate_to_sessions',arguments:{tasks:[{session_id:'s1',prompt:'Omit from summary'},{session_id:'@build'}]}}},
 ];
 const pendingApproval = {id: 'p1', status: 'pending', request: JSON.stringify({kind: 'write', fileName: 'summary.md', intention: 'Create the summary file'})};
 let approvals = [pendingApproval];
@@ -231,7 +235,10 @@ try {
     const activity = page.locator('#message-t1 .activity > details');
     await activity.nth(1).locator('summary').getByText(/Sent to @build\s+Check the build\./).waitFor();
     const labels = await activity.locator('.activity-title > span:first-child').allTextContents();
-    if (JSON.stringify(labels) !== JSON.stringify(['Checking which files are present','Sending a message · @build','Thinking through the request','Sending a message · @old','Reading a file · notes.txt'])) throw new Error('Activity not in event order: ' + JSON.stringify(labels));
+    const expected = ['Checking which files are present','Sending a message · @build','Thinking through the request','Sending a message · @old','Reading a file · notes.txt',
+      'Searching the session timeline · Check the backup job · “build log”', 'Inspecting the session timeline · Current session',
+      'Changing the model · @review · gpt-5-mini', 'Waiting for delegates · @review, @build'];
+    if (JSON.stringify(labels) !== JSON.stringify(expected)) throw new Error('Unexpected activity summaries: ' + JSON.stringify(labels));
     await activity.nth(3).locator('summary').getByText(/Sent to @old\s+An older message\./).waitFor();
     const first = page.locator('#message-t1');
     await first.locator('.answer table strong').getByText('OK').waitFor();

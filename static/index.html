@@ -794,18 +794,45 @@ const toolLabels = {
   write:'Writing a file', create:'Creating a file', apply_patch:'Applying changes',
   glob:'Finding files', grep:'Searching files', web_fetch:'Opening a web page', web_search:'Searching the web',
 };
+function summaryText(value, limit = 80) {
+  if (typeof value !== 'string') return '';
+  const line = value.trim().replace(/\s+/g, ' ');
+  return line.length > limit ? line.slice(0, limit - 1) + '…' : line;
+}
+function toolSession(ref, fallback = '') {
+  if (typeof ref !== 'string' || !ref.trim()) return fallback;
+  const row = sessions.find(s => String(s.id) === ref);
+  return summaryText(row?.handle ? '@' + row.handle : row ? sessionName(row) : ref, 48);
+}
 function toolSummary(tool, name) {
   const args = parse(tool.arguments) || {};
   const key = name.replace(/^app_/, '').toLowerCase();
   const label = Object.hasOwn(toolLabels, key) ? toolLabels[key] : name.replace(/[_-]+/g, ' ').replace(/^./, c => c.toUpperCase());
-  const hint = [tool.toolTitle, tool.tool_title, args.description, args.intention].find(value =>
-    typeof value === 'string' && value.trim() && value.trim().toLowerCase() !== name.toLowerCase());
-  const target = ({plan: {read:'Reviewing the plan', update:'Updating the plan', patch:'Updating the plan'} })[key]?.[args.action];
-  if (typeof target === 'string') return target;
-  if (hint) return hint.trim().replace(/\s+/g,' ').slice(0,200);
-  const subject = (key === 'set_model' ? args.model : key === 'chat' ? args.session_id : key === 'create_session' ? args.title
-    : /read|edit|write|create|view/.test(key) ? args.path || args.filePath || args.file_path || args.fileName : null);
-  return label + (typeof subject === 'string' && subject.trim() ? ' · ' + subject.trim().replace(/\s+/g,' ').slice(0,120) : '');
+  const title = (...parts) => [label, ...parts.filter(Boolean)].join(' · ');
+  const session = () => toolSession(args.session_id, 'Current session');
+  const query = summaryText(args.query, 48);
+  switch (key) {
+    case 'observe_session':
+      return query ? `Searching the session timeline · ${session()} · “${query}”` : title(session());
+    case 'context': case 'context_status': case 'compact': case 'compact_session':
+      return title(session());
+    case 'read_attachment':
+      return title(session(), Number.isInteger(args.ordinal) && args.ordinal >= 0 ? `Image ${args.ordinal + 1}` : '');
+    case 'attach_file': return title(summaryText(args.path, 64));
+    case 'set_model': return title(session(), summaryText(args.model, 48));
+    case 'chat': case 'send_message': return title(toolSession(args.session_id));
+    case 'reply_chat': return title(summaryText(tool.receipts?.[0]?.destination, 48));
+    case 'delegate_to_sessions': {
+      const refs = Array.isArray(args.tasks) ? args.tasks.slice(0,4).map(task => toolSession(task?.session_id)).filter(Boolean) : [];
+      return title(summaryText(refs.join(', '), 96));
+    }
+    case 'create_session': return title(summaryText(args.handle ? '@' + String(args.handle).replace(/^@/, '') : args.title, 48));
+    case 'plan': return ({read:'Reviewing the plan', update:'Updating the plan', patch:'Updating the plan'})[args.action] || label;
+  }
+  const hint = [tool.toolTitle, tool.tool_title, args.description, args.intention].map(value => summaryText(value, 96))
+    .find(value => value && value.toLowerCase() !== name.toLowerCase()) || '';
+  const path = /read|edit|write|create|view|glob|grep/.test(key) ? summaryText(args.path || args.filePath || args.file_path || args.fileName || (key === 'glob' ? args.pattern : ''), 64) : '';
+  return hint ? [hint, path && !hint.includes(path) ? path : ''].filter(Boolean).join(' · ') : title(path);
 }
 function highlightTool(pre, body) {
   pre.classList.add('tool-syntax'); pre.replaceChildren();
