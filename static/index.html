@@ -47,7 +47,7 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relati
 #empty{max-width:420px;margin:18vh auto 0;text-align:center;color:var(--muted)}#empty h2{color:var(--text);font-size:1.1rem;margin-bottom:.3rem}
 .turn{margin-bottom:1.8rem}
 .prompt{white-space:pre-wrap;overflow-wrap:anywhere}
-.speaker{display:block;color:var(--muted);font-size:12px;font-weight:600;margin-bottom:4px}.compact .speaker{display:none}
+.speaker{display:block;color:var(--muted);font-size:12px;font-weight:600;margin-bottom:4px}.compact .speaker,.compact .message-meta{display:none}
 .answer{overflow-wrap:anywhere;margin-top:.8rem}
 .answer>*+*{margin-top:.7rem}.answer p{white-space:pre-wrap}.answer h4{font-size:1rem;margin:0}.answer ul,.answer ol{margin-bottom:0;padding-left:1.3rem}.answer a{color:var(--accent)}
 .answer :not(pre)>code{background:var(--panel);padding:1px 3px}
@@ -112,6 +112,21 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 @media(pointer:coarse){button,#model{min-height:44px}.iconbtn,#send,#stop,#context-button{min-width:44px}#sessions button{padding:.7rem .6rem}#model{min-height:44px}}
 @media(prefers-reduced-motion:reduce){aside{transition:none!important}}
 @media(max-width:720px){#jump{right:1rem}.shell{grid-template-columns:1fr}aside{position:fixed;inset:0 auto 0 0;width:min(320px,82vw);z-index:10;transform:translateX(-100%);visibility:hidden;transition:transform .18s ease,visibility 0s .18s}aside.open{transform:none;visibility:visible;transition:transform .18s ease;box-shadow:12px 0 40px #0005}#context-label:empty{display:none}#scrim.open{display:block;position:fixed;inset:0;background:#0006;z-index:9}#menu{display:inline-flex}#transcript{padding:1rem .8rem}footer.composer{padding:0 .6rem .6rem}}
+#theme,#agent-name{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:4px 8px;max-width:100%}
+#agent-field{display:flex;align-items:center;gap:8px;padding:0 6px;font-size:12px;color:var(--muted)}
+#attachments:empty,.message-images:empty{display:none}
+#attachments{display:flex;flex-wrap:wrap;gap:4px;padding:4px}
+#attachments button{max-width:100%;overflow-wrap:anywhere;font-size:12px}
+.message-images{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.message-images img{display:block;max-width:min(100%,360px);max-height:300px;object-fit:contain}
+.message-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px;color:var(--muted);font-size:12px;margin:2px 0}
+.message-meta button{padding:1px 5px}.message-meta time{margin-right:4px}
+.message-ref{font-size:12px;overflow-wrap:anywhere;color:var(--accent)}
+.turn:target,.turn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+#timeline-list{padding:0;list-style:none}#timeline-list details{width:100%;min-width:0}#timeline-list pre{max-height:180px;overflow:auto}#timeline-list summary{overflow-wrap:anywhere;cursor:pointer}
+@media(prefers-color-scheme:light){:root[data-theme=dark]{--bg:#1f1f1f;--panel:#292929;--raised:#333;--hover:#383838;--selected:#414141;--border:#525252;--text:#fff;--muted:#c2c2c2;--accent:#75b6e7;--accent-ink:#102331;--danger:#ff99a4;--ok:#9ad29a;--warn:#f2c276;color-scheme:dark}}
+@media(prefers-color-scheme:dark){:root[data-theme=light]{--bg:#fff;--panel:#f5f5f5;--raised:#fff;--hover:#ebebeb;--selected:#e0e0e0;--border:#d1d1d1;--text:#242424;--muted:#616161;--accent:#0f6cbd;--accent-ink:#fff;--danger:#b10e1c;--ok:#107c10;--warn:#835b00;color-scheme:light}}
+.tool-syntax .key{color:var(--accent)}.tool-syntax .literal{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -158,6 +173,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
   <header class="topbar">
     <button id="menu" type="button" class="iconbtn" aria-label="Conversations" aria-expanded="false" aria-controls="sidebar"><svg class="icon"><use href="#i-menu"/></svg></button>
     <h2 id="title">New conversation</h2>
+    <button id="timeline-button" type="button" title="Inspect session events" hidden>Timeline</button>
     <button id="context-button" type="button" aria-label="Context usage" title="Context usage and compaction" hidden><svg class="icon"><use href="#i-gauge"/></svg><span id="context-label"></span></button>
   </header>
   <div id="notice" role="alert" hidden><svg class="icon" style="color:var(--warn)"><use href="#i-alert"/></svg><p></p><button type="button" class="iconbtn" aria-label="Dismiss" id="notice-close"><svg class="icon"><use href="#i-close"/></svg></button></div>
@@ -169,11 +185,15 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
   <button id="jump" type="button" aria-label="Jump to latest" title="Jump to latest" hidden><svg class="icon"><use href="#i-down"/></svg></button>
     <section id="approvals" aria-label="Permission requests"></section>
     <form id="composer">
+      <label id="agent-field">Agent name <input id="agent-name" placeholder="Optional @name" maxlength="33" autocomplete="off"></label>
+      <div id="attachments" aria-label="Attached images"></div>
+      <input id="image-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" multiple hidden>
       <label class="sr" for="prompt">Message</label>
       <textarea id="prompt" rows="1" placeholder="Message"></textarea>
       <div class="tools">
         <label class="sr" for="model">Model (applies from the next turn)</label>
         <select id="model" title="Model · applies from the next turn"><option value="">Loading models…</option></select>
+        <button id="attach" type="button" title="Attach PNG, JPEG, GIF, WebP or SVG">Attach image</button>
         <span class="grow"></span>
         <button id="stop" type="button" aria-label="Stop" title="Stop the current turn and clear the queue" hidden><svg class="icon"><use href="#i-stop"/></svg></button>
         <button id="send" type="submit" class="primary" aria-label="Send" title="Send" disabled><svg class="icon"><use href="#i-send"/></svg></button>
@@ -185,6 +205,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 <dialog id="settings-dialog" aria-labelledby="settings-title">
   <header><h2 id="settings-title">Settings</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
   <div class="body">
+    <label>Appearance <select id="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
     <div id="config" class="muted">Not connected.</div>
     <div class="dialog-actions"><button id="change-token" type="button" class="quiet"><svg class="icon"><use href="#i-key"/></svg>Change access token</button></div>
   </div>
@@ -198,6 +219,11 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
     <div class="dialog-actions"><button id="compact" type="button" class="quiet"><svg class="icon"><use href="#i-compress"/></svg>Compact now</button></div>
   </div>
 </dialog>
+<dialog id="timeline-dialog" aria-labelledby="timeline-title">
+  <header><h2 id="timeline-title">Timeline</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
+  <div class="body"><p id="timeline-status" role="status"></p><ul id="timeline-list"></ul><button id="timeline-more" type="button" class="quiet" hidden>Load more events</button></div>
+</dialog>
+<output id="message-feedback" class="sr" aria-live="polite"></output>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -212,6 +238,8 @@ if (fragment.has('token')) {
 }
 let config = null, selected = null, context = null, generation = 0, bootController = null;
 let sending = false, pending = null, sessions = [];
+const imageDrafts = new Map(), imageURLs = new Set();
+let timelineAfter = 0;
 const drafts = new Map(), turnNodes = new Map(), sessionNodes = new Map();
 const DONE = new Set(['completed','complete','failed','error','cancelled','canceled','stopped','interrupted','succeeded','done']);
 const STATES = {queued:'Queued', running:'Working', cancelled:'Stopped', canceled:'Stopped', stopped:'Stopped', interrupted:'Interrupted by a restart · not resent', error:'Failed', failed:'Failed'};
@@ -250,12 +278,18 @@ function when(seconds) {
 function modelName(id) { return config?.models.find(m => m.id === id)?.name || id || ''; }
 function controls() {
   const active = Boolean(context?.active);
-  $('send').disabled = !config || !token || !$('prompt').value.trim() || sending || Boolean(context && !context.ready);
+  $('send').disabled = !config || !token || (!$('prompt').value.trim() && !draftImages().length) || sending || Boolean(context && !context.ready);
   const label = active ? 'Queue message' : 'Send';
   $('send').setAttribute('aria-label', label); $('send').title = label;
   $('stop').hidden = !selected || !active; $('stop').disabled = sending;
   $('new').disabled = sending;
   $('context-button').hidden = !selected;
+  $('timeline-button').hidden = !selected;
+  $('agent-field').hidden = Boolean(selected);
+  $('attach').disabled = sending || draftImages().length >= 3;
+  $('agent-name').disabled = sending;
+  $('prompt').readOnly = sending;
+  for (const b of $('attachments').children) b.disabled = sending;
 }
 async function api(path, {method = 'GET', body, signal} = {}) {
   const headers = {Authorization: 'Bearer ' + token};
@@ -345,7 +379,7 @@ function renderSessions() {
       b.onclick = () => { if (!sending) selectSession(id); };
       sessionNodes.set(id, b);
     }
-    text(b.firstChild, s.title || 'Untitled conversation'); text(b.lastChild, [modelName(s.model), when(s.created_at)].filter(Boolean).join(' · '));
+    text(b.firstChild, s.handle ? '@' + s.handle + ' · ' + s.title : s.title || 'Untitled conversation'); text(b.lastChild, [modelName(s.model), when(s.created_at)].filter(Boolean).join(' · '));
     b.setAttribute('aria-current', String(id === selected)); b.disabled = sending;
     const current = nav.children[index]; if (current !== b) nav.insertBefore(b, current || null);
   });
@@ -359,8 +393,98 @@ function newTurn(id) {
   const prompt = node('div', 'prompt'), activity = node('div', 'activity'), answer = node('div', 'answer'), error = node('div', 'error');
   const state = node('div', 'state'), stateIcon = icon('loader'), stateText = node('span'); state.append(stateIcon, stateText);
   const note = node('div', 'compact-note');
-  root.append(note, node('span', 'speaker', 'You'), prompt, activity, answer, error, state);
-  return {root, prompt, answer, error, activity, state, stateIcon, stateText, note, entries:new Map()};
+  const speaker = node('span', 'speaker', 'You'), pictures = node('div', 'message-images');
+  const promptMeta = messageMeta(id, 'prompt', prompt), answerMeta = messageMeta(id, 'answer', answer);
+  root.id = 'message-' + id; root.tabIndex = -1;
+  root.append(note, speaker, prompt, pictures, promptMeta, activity, answer, answerMeta, error, state);
+  return {root, speaker, prompt, pictures, promptMeta, answerMeta, answer, error, activity, state, stateIcon, stateText, note, entries:new Map()};
+}
+function setTheme(value) {
+  $('theme').value = value;
+  if (value === 'system') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = value;
+}
+try { const stored = localStorage.getItem('ms-durable.theme'); setTheme(['light','dark'].includes(stored) ? stored : 'system'); } catch {}
+$('theme').onchange = () => { setTheme($('theme').value); try { localStorage.setItem('ms-durable.theme', $('theme').value); } catch {} };
+function draftImages() { return imageDrafts.get(selected || 'new') || []; }
+function drawDraftImages() {
+  const box = $('attachments'); box.replaceChildren();
+  draftImages().forEach((image, i) => {
+    const b = node('button', 'quiet', image.name + ' ×'); b.type = 'button'; b.setAttribute('aria-label', 'Remove ' + image.name);
+    b.onclick = () => { imageDrafts.set(selected || 'new', draftImages().filter((_, j) => j !== i)); drawDraftImages(); controls(); };
+    box.append(b);
+  });
+}
+$('attach').onclick = () => $('image-input').click();
+$('image-input').onchange = async () => {
+  const key = selected || 'new', files = [...$('image-input').files]; $('image-input').value = '';
+  const read = file => new Promise((resolve, reject) => {
+    const reader = new FileReader(); reader.onload = () => resolve(reader.result.split(',')[1]); reader.onerror = reject; reader.readAsDataURL(file);
+  });
+  try {
+    if (files.length + draftImages().length > 3) throw new Error('Attach up to three images per message.');
+    if (files.some(f => f.size < 1 || f.size > 1048576)) throw new Error('Each image must be at most 1 MiB.');
+    const images = await Promise.all(files.map(async f => ({name:f.name.slice(0,160), mime:f.type || (/\.svg$/i.test(f.name) ? 'image/svg+xml' : ''), data:await read(f)})));
+    const current = imageDrafts.get(key) || [];
+    if (images.length + current.length > 3) throw new Error('Attach up to three images per message.');
+    imageDrafts.set(key, [...current, ...images]); if (key === (selected || 'new')) { drawDraftImages(); controls(); }
+  } catch(e) { notice(e.message || 'Could not read the selected image.'); }
+};
+function messageMeta(id, role, content) {
+  const bar = node('div', 'message-meta'), date = node('time'); bar.append(date);
+  for (const label of ['Copy', 'Reference']) {
+    const b = node('button', '', label); b.type = 'button'; b.setAttribute('aria-label', label + ' ' + role);
+    b.onclick = async () => {
+      if (label === 'Copy') {
+        try { await navigator.clipboard.writeText(content.dataset.raw ?? content.textContent); text($('message-feedback'), 'Copied'); }
+        catch { notice('Could not access the clipboard.'); }
+      } else {
+        const field = $('prompt');
+        field.value += (field.value.trim() ? '\n' : '') + '[[message:' + selected + ':' + id + ':' + role + ']] ';
+        field.dispatchEvent(new Event('input')); field.focus(); field.setSelectionRange(field.value.length, field.value.length);
+      }
+    };
+    bar.append(b);
+  }
+  return bar;
+}
+function stamp(bar, seconds) {
+  const t = bar.firstChild; t.hidden = !seconds;
+  if (seconds) { const date = new Date(seconds * 1000); t.dateTime = date.toISOString(); t.title = date.toLocaleString(); text(t, when(seconds)); }
+}
+function refs(el, raw) {
+  const re = /\[\[message:(?:([\w-]{1,80}):)?([\w-]{1,80}):(prompt|answer)\]\]/g; let end = 0;
+  for (const match of raw.matchAll(re)) {
+    el.append(raw.slice(end, match.index));
+    const [, sid, tid, role] = match;
+    const a = node('a', 'message-ref', '#' + (sid ? sid.slice(0, 8) + '/' : '') + tid.slice(0, 8) + ' · ' + role);
+    a.setAttribute('aria-label', 'View referenced ' + role); a.title = match[0]; a.href = '#message-' + tid;
+    a.onclick = e => {
+      e.preventDefault();
+      const view = (!sid || sid === selected) && turnNodes.get(tid), target = view?.[role];
+      if (!target || (!target.textContent && !(role === 'prompt' && view.pictures.children.length))) return notice('Referenced message is not in this conversation.');
+      target.tabIndex = -1; target.focus(); target.scrollIntoView({block:'center'});
+    };
+    el.append(a); end = match.index + match[0].length;
+  }
+  el.append(raw.slice(end));
+}
+function showImages(view, turn, ctx) {
+  const items = turn.images || [], key = items.map(i => i.digest).join(',');
+  if (view.pictures.dataset.key === key) return;
+  view.pictures.dataset.key = key; view.pictures.replaceChildren();
+  for (const item of items) {
+    const img = node('img'); img.alt = item.name; view.pictures.append(img);
+    api('/api/sessions/' + encodeURIComponent(ctx.id) + '/turns/' + encodeURIComponent(turn.id) + '/images/' + item.ordinal, {signal:ctx.controller.signal})
+      .then(r => r.blob()).then(blob => {
+        if (!img.isConnected || context !== ctx) return;
+        if (item.mime === 'image/svg+xml') {
+          // Use an opaque-origin data URL, never a same-origin SVG document URL.
+          const reader = new FileReader(); reader.onload = () => { if (img.isConnected) img.src = reader.result; }; reader.readAsDataURL(blob);
+        } else { const url = URL.createObjectURL(blob); imageURLs.add(url); img.src = url; }
+      })
+      .catch(() => { if (img.isConnected) img.replaceWith(node('span', 'muted', 'Image unavailable: ' + item.name)); });
+  }
 }
 const BLOCK = /^\s*(```|#{1,4}\s|[-*]\s|\d+\.\s)/;
 function markdown(el, src) {
@@ -374,7 +498,7 @@ function markdown(el, src) {
       i++; const pre = node('pre'); pre.append(node('code', '', body.join('\n'))); el.append(pre); continue;
     }
     if (!line.trim()) { i++; continue; }
-    const heading = line.match(/^#{1,4}\s+(.*)/);
+    const heading = line.match(/^\s*#{1,4}\s+(.*)/);
     if (heading) { el.append(inline(node('h4'), heading[1])); i++; continue; }
     const item = /^\s*([-*]|\d+\.)\s+/;
     if (item.test(line)) {
@@ -382,7 +506,7 @@ function markdown(el, src) {
       while (i < lines.length && item.test(lines[i])) list.append(inline(node('li'), lines[i++].replace(item, '')));
       el.append(list); continue;
     }
-    const body = [];
+    const body = [lines[i++]];
     while (i < lines.length && lines[i].trim() && !BLOCK.test(lines[i])) body.push(lines[i++]);
     el.append(inline(node('p'), body.join('\n')));
   }
@@ -414,6 +538,16 @@ function toolIcon(name) {
   if (n.includes('-') || n.includes('mcp')) return 'plug';
   return 'tool';
 }
+function highlightTool(pre, body) {
+  pre.classList.add('tool-syntax'); pre.replaceChildren();
+  const tokens = /("(?:[^"\\]|\\.)*")(?=\s*:)|\b(true|false|null)\b/g;
+  let end = 0;
+  for (const match of body.matchAll(tokens)) {
+    pre.append(body.slice(end, match.index), node('span', match[1] ? 'key' : 'literal', match[0]));
+    end = match.index + match[0].length;
+  }
+  pre.append(body.slice(end));
+}
 function entry(view, key, iconName, iconClass, title, subject, body) {
   let d = view.entries.get(key);
   if (!d) {
@@ -424,7 +558,12 @@ function entry(view, key, iconName, iconClass, title, subject, body) {
   const [lead, b, code, tail] = d.firstChild.children;
   setIcon(lead, iconName); text(b, title); text(code, subject);
   if (iconClass === 'running') setIcon(tail, 'loader', 'spin'); else if (iconClass === 'wait') setIcon(tail, 'shield', 'wait'); else if (iconClass === 'bad') setIcon(tail, 'x-circle', 'bad'); else if (iconClass === 'ok') setIcon(tail, 'check', 'ok'); else tail.setAttribute('class', 'icon sr');
-  text(d.lastChild, body);
+  const pre = d.lastChild;
+  if (pre.dataset.body !== body) {
+    pre.dataset.body = body;
+    if (!key.startsWith('tool:')) text(pre, body);
+    else highlightTool(pre, body);
+  }
 }
 function renderCompaction(v, turn, active) {
   v.prompt.hidden = true; v.answer.hidden = true; v.activity.hidden = true; v.note.hidden = false; v.root.classList.add('compact');
@@ -452,7 +591,12 @@ function render(ctx) {
       v.state.hidden = true; text(v.error, active ? '' : (turn.error ? format(turn.error) : ''));
     } else {
       v.note.hidden = true;
-      text(v.prompt, turn.prompt);
+      text(v.speaker, turn.sender_id ? (turn.sender_handle ? '@' + turn.sender_handle : 'Agent') : 'You');
+      const raw = turn.prompt || '';
+      if (v.prompt.dataset.raw !== raw) { v.prompt.dataset.raw = raw; v.prompt.replaceChildren(); refs(v.prompt, raw); }
+      showImages(v, turn, ctx);
+      stamp(v.promptMeta, turn.created_at); stamp(v.answerMeta, turn.finished_at);
+      v.promptMeta.hidden = !raw && !(turn.images || []).length; v.answerMeta.hidden = !turn.answer || active;
       let draft = '', thoughts = ''; const tools = new Map();
       for (const e of eventsByTurn.get(id) || []) {
         const d = e.data || {};
@@ -474,6 +618,7 @@ function render(ctx) {
       v.answer.classList.toggle('working', working);
       if (working || !(turn.answer || draft)) { v.answer.md = null; text(v.answer, working ? 'Working' : ''); }
       else markdown(v.answer, turn.answer || draft);
+      v.answer.dataset.raw = turn.answer || draft;
       text(v.error, turn.error ? format(turn.error) : '');
       const label = status === 'done' ? '' : (status === 'running' && !waiting ? '' : STATES[status] || (active ? '' : status));
       v.state.hidden = !label || (status === 'running');
@@ -503,7 +648,7 @@ async function snapshot(ctx) {
   if (context !== ctx) return;
   ctx.turns = data.turns || []; ctx.ready = true;
   for (const e of data.events || []) { ctx.events.set(e.seq, e); ctx.after = Math.max(ctx.after, e.seq); }
-  text($('title'), data.session.title || 'Untitled conversation');
+  text($('title'), data.session.handle ? '@' + data.session.handle + ' · ' + data.session.title : data.session.title || 'Untitled conversation');
   if (document.activeElement !== $('model')) $('model').value = data.session.model;
   const i = sessions.findIndex(s => String(s.id) === ctx.id);
   if (i >= 0) sessions[i] = data.session; else sessions.unshift(data.session);
@@ -567,9 +712,10 @@ function openSidebar(open) {
 }
 function selectSession(id) {
   drafts.set(selected || 'new', $('prompt').value);
+  for (const url of imageURLs) URL.revokeObjectURL(url); imageURLs.clear();
   detach(); selected = id;
   $('approvals').replaceChildren(); $('approvals').dataset.ids = '';
-  $('prompt').value = drafts.get(id || 'new') || ''; grow();
+  $('prompt').value = drafts.get(id || 'new') || ''; grow(); drawDraftImages();
   $('turns').replaceChildren(); turnNodes.clear();
   openSidebar(false);
   text($('title'), id ? 'Loading…' : 'New conversation');
@@ -644,6 +790,23 @@ $('compact').onclick = async () => {
   try { await json('/api/sessions/' + encodeURIComponent(selected) + '/compact', {method:'POST', body:{instructions:'', request_id:requestId()}}); $('context-dialog').close(); scheduleSnapshot(context); }
   catch(error) { notice(error.message); } finally { $('compact').disabled = false; }
 };
+async function loadTimeline() {
+  const ctx = context, more = $('timeline-more'); if (!ctx) return;
+  more.disabled = true;
+  try {
+    const page = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/timeline?after=' + timelineAfter, {signal:ctx.controller.signal});
+    if (ctx !== context) return;
+    for (const event of page.events) {
+      const li = node('li'), details = node('details');
+      details.append(node('summary', '', '#' + event.seq + ' · ' + event.type), node('pre', '', format(event.data))); li.append(details); $('timeline-list').append(li);
+    }
+    timelineAfter = page.next_after;
+    more.hidden = timelineAfter == null;
+    text($('timeline-status'), $('timeline-list').children.length ? '' : 'No events recorded.');
+  } catch(e) { if (context === ctx) text($('timeline-status'), e.message); } finally { more.disabled = false; }
+}
+$('timeline-button').onclick = () => { timelineAfter = 0; $('timeline-list').replaceChildren(); $('timeline-more').hidden = true; text($('timeline-status'), 'Loading…'); $('timeline-dialog').showModal(); loadTimeline(); };
+$('timeline-more').onclick = loadTimeline;
 $('notice-close').onclick = () => notice();
 $('menu').onclick = () => openSidebar(!$('sidebar').classList.contains('open'));
 $('scrim').onclick = () => openSidebar(false);
@@ -656,19 +819,23 @@ document.addEventListener('keydown', event => { if (event.key === 'Escape' && $(
 $('composer').onsubmit = async event => {
   event.preventDefault();
   const prompt = $('prompt').value.trim();
-  if (!prompt || sending || !config || (context && !context.ready)) return;
+  const images = draftImages();
+  if ((!prompt && !images.length) || sending || !config || (context && !context.ready)) return;
   sending = true; controls(); renderSessions(); notice();
   try {
     if (!selected) {
       if (!$('model').value) throw new Error('Choose a model first.');
       const title = prompt.split('\n')[0].slice(0, 60).trim() || 'New conversation';
-      const s = await json('/api/sessions', {method:'POST', body:{model:$('model').value, title}});
+      const handle = $('agent-name').value.trim() || undefined;
+      const s = await json('/api/sessions', {method:'POST', body:{model:$('model').value, title, handle}});
+      imageDrafts.set(String(s.id), images); $('agent-name').value = '';
       sessions.unshift(s); selectSession(String(s.id)); $('prompt').value = prompt;
     }
     const id = selected;
-    if (!pending || pending.session !== id || pending.prompt !== prompt) pending = {session:id, prompt, request_id:requestId()};
-    const turn = await json('/api/sessions/' + encodeURIComponent(id) + '/turns', {method:'POST', body:{prompt, request_id:pending.request_id}});
+    if (!pending || pending.session !== id || pending.prompt !== prompt || pending.images !== images && (pending.images.length || images.length)) pending = {session:id, prompt, images, request_id:requestId()};
+    const turn = await json('/api/sessions/' + encodeURIComponent(id) + '/turns', {method:'POST', body:{prompt, images, request_id:pending.request_id}});
     pending = null; drafts.delete(id); drafts.delete('new'); $('prompt').value = ''; grow();
+    imageDrafts.delete(id); imageDrafts.delete('new'); drawDraftImages();
     if (context?.id === id) {
       const index = context.turns.findIndex(t => String(t.id) === String(turn.id));
       if (index < 0) context.turns.push(turn); else context.turns[index] = turn;

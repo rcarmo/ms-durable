@@ -14,7 +14,7 @@ const port = portProbe.port;
 portProbe.stop(true);
 const url = `http://127.0.0.1:${port}`;
 const server = Bun.spawn([process.env.MS_DURABLE_TEST_PYTHON!, '-m', 'ms_durable'], {
-  env: {...process.env, MS_DURABLE_HOST:'127.0.0.1', MS_DURABLE_PORT:String(port), MS_DURABLE_DATA:root+'/data', MS_DURABLE_CWD:root+'/workspace', MS_DURABLE_TOKEN:token, MS_DURABLE_MCP_FILE:'', MS_DURABLE_SKILL_DIRS:''},
+  env: {...process.env, MS_DURABLE_HOST:'127.0.0.1', MS_DURABLE_PORT:String(port), MS_DURABLE_DATA:root+'/data', MS_DURABLE_CWD:root+'/workspace', MS_DURABLE_TOKEN:token, MS_DURABLE_MCP_FILE:'', MS_DURABLE_SKILLS:''},
   stdout: Bun.file(root+'/server.stdout.log'), stderr:Bun.file(root+'/server.stderr.log'),
 });
 const checks:string[] = [];

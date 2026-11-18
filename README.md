@@ -44,10 +44,17 @@ Use HTTPS for remote access, either directly or through a reverse proxy which fo
 
 The UI has independent conversations, streaming text, expandable tool activity, a durable queue, approvals, cancellation, a model picker and native context/compaction controls. Model changes apply at a turn boundary. The UI renders model output as text, not executable HTML. On reconnect it reconciles the snapshot and resumes SSE from its last sequence number.
 
+- **Appearance:** follow the system theme or choose light or dark in Settings.
+- **Images:** attach PNG, JPEG, GIF, WebP or SVG (up to three per message, 1 MiB each). The original bytes live in SQLite and an authenticated media route serves them. The browser displays SVG in image context. Images are not added automatically to model requests. The model can inspect them on demand with the attachment tool.
+- **Timeline:** open the session's paginated event log and expand individual event payloads.
+- **Message references:** use **Copy** for text or **Reference** to insert a reference into the composer. It uses the full chat ID, turn ID and message role; the transcript shows shortened IDs. Select the reference to jump to the message in the same chat. Answers written before timestamp support have no recorded completion time.
+- **Named sessions:** enter an optional unique `@name` before the first send. Names are case-insensitive. Agents can send to named sessions or raw session IDs using the application tool. The recipient sees the sender and no reply is sent back automatically.
+
 Application tools are visible to every application session:
 
-- `app_list_sessions`, `app_observe_session`: bounded session and event inspection.
-- `app_create_session`, `app_send_message`: independent sessions and deduplicated cross-session input.
+- `app_list_sessions`, `app_observe_session`: session inspection, attachment metadata and a bounded timeline page. Pass the returned `next_after` as `after_seq` for the next page.
+- `app_read_attachment`: inspect a stored attachment by chat ID (or `@handle`), turn ID and ordinal. The SDK returns raster images as image results and SVG as bounded source text.
+- `app_create_session`, `app_send_message`: independent sessions and deduplicated one-hop delivery. A turn received from another agent cannot use this tool to send again.
 - `app_list_models`, `app_set_model`: model discovery and selection.
 - `app_context_status`, `app_compact_session`: native context inspection and queued compaction.
 
@@ -156,7 +163,7 @@ MS_DURABLE_PROBE_DIR="$WORKSPACE_TMP_BASE/ms-durable/runs/probe" \
   MS_DURABLE_MCP_FILE=/secure/path/mcp.json make live-resume
 ```
 
-Set `WORKSPACE_TMP_BASE` first. Disposable paths follow its explicit override, CI temporary paths, writable `/workspace/tmp`, or a system-temp fallback, always under `ms-durable/`. The Makefile redirects pip, Python bytecode, Ruff, Bun and Copilot extraction caches. Persistent state never belongs there. See [AGENTS.md](AGENTS.md) and [verification.md](evidence/verification.md) for the current test record.
+Set `WORKSPACE_TMP_BASE` first. Disposable paths follow its explicit override, CI temporary paths, writable `/workspace/tmp`, or a system-temp fallback, always under `ms-durable/`. The Makefile redirects pip, Python bytecode, Ruff, Bun and Copilot extraction caches. Persistent state never belongs there. See [AGENTS.md](AGENTS.md) for the workspace setup.
 
 ## Licence
 

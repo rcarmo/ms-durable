@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -10,13 +11,13 @@ import re
 import time
 from pathlib import Path
 
-from copilot import CopilotClient, RuntimeConnection
+from copilot import AgentMessageSource, CopilotClient, RuntimeConnection
 from copilot.rpc import (
     MetadataContextInfoRequest,
     PermissionDecisionReject,
     SessionHistoryCompactRequest,
 )
-from copilot.tools import Tool, ToolResult
+from copilot.tools import Tool, ToolBinaryResult, ToolResult
 
 from .config import Settings
 from .providers import Providers
@@ -173,11 +174,11 @@ class Runtime:
         if sid not in self.workers or self.workers[sid].done():
             self.workers[sid] = asyncio.create_task(self.work(sid))
 
-    async def enqueue(self, sid, prompt, request_id, kind="prompt"):
+    async def enqueue(self, sid, prompt, request_id, kind="prompt", **options):
         if self.stopping or sid in self.aborting or sid in self.quarantined:
             raise ValueError("Session is stopping or requires recovery")
         epoch = self.abort_epochs.get(sid, 0)
-        turn = await self.store.submit(sid, prompt, request_id, kind=kind)
+        turn = await self.store.submit(sid, prompt, request_id, kind=kind, **options)
         if epoch != self.abort_epochs.get(sid, 0):
             await self.store.execute(
                 "UPDATE turns SET status='cancelled' WHERE id=? AND status='queued'", (turn["id"],)
@@ -225,6 +226,8 @@ class Runtime:
         def make(name, description, properties, required, fn):
             async def handle(invocation):
                 result = await fn(invocation.arguments)
+                if isinstance(result, ToolResult):
+                    return result
                 return ToolResult(
                     text_result_for_llm=json.dumps(self.redact(result), default=str),
                     result_type="success",
@@ -244,34 +247,82 @@ class Runtime:
 
         async def sessions(args):
             return await self.store.rows(
-                "SELECT id,title,model,created_at FROM sessions ORDER BY created_at DESC"
+                "SELECT id,title,model,created_at,handle FROM sessions ORDER BY created_at DESC"
             )
 
         async def observe(args):
-            sid = args.get("session_id", own_sid)
-            await self.store.session(sid)
-            # Bounded projection, not raw SQLite or credential access.
+            info = await self.store.resolve_session(args.get("session_id", own_sid))
+            sid = info["id"]
+            turns = await self.store.rows(
+                "SELECT * FROM turns WHERE session_id=? ORDER BY created_at DESC LIMIT 20", (sid,)
+            )
+            for turn in turns:
+                turn["images"] = await self.store.rows(
+                    "SELECT ordinal,name,mime FROM turn_images WHERE turn_id=? ORDER BY ordinal",
+                    (turn["id"],),
+                )
+            events = await self.store.events(sid, max(0, args.get("after_seq", 0)), 101)
             return {
-                "session": await self.store.session(sid),
-                "turns": await self.store.rows(
-                    "SELECT * FROM turns WHERE session_id=? ORDER BY created_at DESC LIMIT 20",
-                    (sid,),
-                ),
-                "events": (await self.store.events(sid, max(0, args.get("after_seq", 0))))[-100:],
+                "session": info,
+                "turns": turns,
+                "events": events[:100],
+                "next_after": events[99]["seq"] if len(events) > 100 else None,
             }
+
+        async def attachment(args):
+            info = await self.store.resolve_session(args.get("session_id", own_sid))
+            image = await self.store.one(
+                "SELECT name,mime,content FROM turn_images JOIN turns ON turns.id=turn_images.turn_id "
+                "WHERE turns.session_id=? AND turn_id=? AND ordinal=?",
+                (info["id"], args["turn_id"], args["ordinal"]),
+            )
+            if image is None:
+                raise ValueError("Unknown attachment in this session")
+            name = self.redact(image["name"])
+            if image["mime"] == "image/svg+xml":
+                source = image["content"].decode("utf-8-sig")
+                return {
+                    "name": name,
+                    "mime": image["mime"],
+                    "source": source[:16000],
+                    "truncated": len(source) > 16000,
+                }
+            return ToolResult(
+                text_result_for_llm=json.dumps({"name": name, "mime": image["mime"]}),
+                binary_results_for_llm=[
+                    ToolBinaryResult(
+                        type="image",
+                        data=base64.b64encode(image["content"]).decode("ascii"),
+                        mime_type=image["mime"],
+                        description=name,
+                    )
+                ],
+            )
 
         async def create(args):
             return await self.store.create_session(
                 args.get("title", "Agent"),
                 args.get("model") or (await self.store.session(own_sid))["model"],
+                args.get("handle"),
             )
 
         async def send(args):
-            if args["session_id"] == own_sid:
+            target = await self.store.resolve_session(args["session_id"])
+            if target["id"] == own_sid:
                 raise ValueError(
                     "Use the normal conversation for this session; send only to another app session"
                 )
-            return await self.enqueue(args["session_id"], args["prompt"], args["request_id"])
+            active_id = self.active.get(own_sid)
+            if active_id:
+                turn = await self.store.one("SELECT sender_id FROM turns WHERE id=?", (active_id,))
+                if turn and turn["sender_id"]:
+                    raise ValueError("An agent-delivered turn cannot send another agent message")
+            prompt, request_id = args["prompt"].strip(), args["request_id"].strip()
+            if not prompt or len(prompt) > 200_000 or not request_id or len(request_id) > 200:
+                raise ValueError("Invalid chat message or request ID")
+            return await self.enqueue(
+                target["id"], prompt, f"agent:{own_sid}:{request_id}", sender_id=own_sid
+            )
 
         async def model(args):
             # Applied when the next turn starts, using native SDK set_model.
@@ -320,21 +371,32 @@ class Runtime:
             ),
             make(
                 "app_observe_session",
-                "Inspect this app session history and activity; defaults to this session.",
+                "Inspect a session by ID or @handle; returns recent turns, attachment metadata and a page of timeline events.",
                 {"session_id": string, "after_seq": {"type": "integer"}},
                 [],
                 observe,
             ),
             make(
+                "app_read_attachment",
+                "Inspect one stored chat image by turn ID and ordinal. SVG is returned as source; raster images use SDK image results.",
+                {
+                    "session_id": string,
+                    "turn_id": string,
+                    "ordinal": {"type": "integer", "minimum": 0},
+                },
+                ["turn_id", "ordinal"],
+                attachment,
+            ),
+            make(
                 "app_create_session",
                 "Create an independent agent session in this application.",
-                {"title": string, "model": string},
+                {"title": string, "model": string, "handle": string},
                 [],
                 create,
             ),
             make(
                 "app_send_message",
-                "Queue a durable prompt to another app session; use a stable request_id for retries.",
+                "Queue a one-hop message by session ID or @handle; reuse request_id for retries. Agent-delivered turns cannot send messages.",
                 {"session_id": string, "prompt": string, "request_id": string},
                 ["session_id", "prompt", "request_id"],
                 send,
@@ -547,9 +609,13 @@ class Runtime:
                         )
                     )
                 else:
+                    options = {}
+                    if turn["sender_id"]:
+                        options["source"] = AgentMessageSource(agent_id=turn["sender_id"])
+                    prompt = turn["prompt"] or "[Image attached to the chat for display only.]"
                     sending = asyncio.create_task(
                         session.send_and_wait(
-                            turn["prompt"], client_turn_id=tid, timeout=float("inf")
+                            prompt, client_turn_id=tid, timeout=float("inf"), **options
                         )
                     )
                 try:
@@ -585,8 +651,8 @@ class Runtime:
                     else result.get("data", {}).get("content", "")
                 )
                 await self.store.execute(
-                    "UPDATE turns SET status='done',answer=? WHERE id=? AND status='running'",
-                    (text, tid),
+                    "UPDATE turns SET status='done',answer=?,finished_at=? WHERE id=? AND status='running'",
+                    (text, time.time(), tid),
                 )
             except asyncio.CancelledError:
                 await self.store.execute(

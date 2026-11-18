@@ -10,11 +10,12 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .config import Settings
+from .media import MAX_BODY, MAX_IMAGES, ImageInput
 from .runtime import Runtime
 from .store import Store
 
@@ -25,10 +26,13 @@ class SessionInput(BaseModel):
     title: str = Field(default="New session", min_length=1, max_length=100)
     model: str = Field(min_length=1, max_length=200)
 
+    handle: str | None = Field(default=None, max_length=33)
+
 
 class TurnInput(BaseModel):
-    prompt: str = Field(min_length=1, max_length=200_000)
+    prompt: str = Field(max_length=200_000)
     request_id: str = Field(min_length=1, max_length=200)
+    images: list[ImageInput] = Field(default_factory=list, max_length=MAX_IMAGES)
 
 
 class ModelInput(BaseModel):
@@ -99,8 +103,11 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'"
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            (
+                "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' blob: data:; frame-ancestors 'none'; base-uri 'none'"
+            ),
         )
         return response
 
@@ -136,7 +143,10 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
 
     @app.post("/api/sessions", dependencies=[Depends(auth)])
     async def new_session(value: SessionInput):
-        return await app.state.store.create_session(value.title, value.model)
+        try:
+            return await app.state.store.create_session(value.title, value.model, value.handle)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
 
     @app.get("/api/sessions/{sid}", dependencies=[Depends(auth)])
     async def session(sid: str):
@@ -146,13 +156,60 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
             raise HTTPException(404, "Unknown session") from None
 
     @app.post("/api/sessions/{sid}/turns", dependencies=[Depends(auth)])
-    async def submit(sid: str, value: TurnInput):
+    async def submit(sid: str, request: Request):
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > MAX_BODY:
+                raise HTTPException(413, "Message is too large")
+            body.extend(chunk)
         try:
-            return await app.state.runtime.enqueue(sid, value.prompt, value.request_id)
+            value = TurnInput.model_validate_json(body)
+            images = [image.decode() for image in value.images]
+            if not value.prompt.strip() and not images:
+                raise ValueError("Enter a message or attach an image")
+        except ValueError:
+            raise HTTPException(
+                422, "Invalid message or image (up to three images, 1 MiB each)"
+            ) from None
+        try:
+            options = {"images": images} if images else {}
+            return await app.state.runtime.enqueue(
+                sid, value.prompt.strip(), value.request_id, **options
+            )
         except KeyError:
             raise HTTPException(404, "Unknown session") from None
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from None
+
+    @app.get("/api/sessions/{sid}/turns/{tid}/images/{ordinal}", dependencies=[Depends(auth)])
+    async def image(sid: str, tid: str, ordinal: int):
+        item = await app.state.store.one(
+            "SELECT mime,content FROM turn_images JOIN turns ON turns.id=turn_images.turn_id "
+            "WHERE turns.session_id=? AND turn_id=? AND ordinal=?",
+            (sid, tid, ordinal),
+        )
+        if item is None:
+            raise HTTPException(404, "Unknown image")
+        return Response(
+            item["content"],
+            media_type=item["mime"],
+            headers={
+                "Content-Disposition": "attachment",
+                "Content-Security-Policy": "default-src 'none'; sandbox",
+            },
+        )
+
+    @app.get("/api/sessions/{sid}/timeline", dependencies=[Depends(auth)])
+    async def timeline(
+        sid: str, after: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200)
+    ):
+        try:
+            await app.state.store.session(sid)
+        except KeyError:
+            raise HTTPException(404, "Unknown session") from None
+        items = await app.state.store.events(sid, after, limit + 1)
+        page = items[:limit]
+        return {"events": page, "next_after": page[-1]["seq"] if len(items) > limit else None}
 
     @app.get("/api/sessions/{sid}/context", dependencies=[Depends(auth)])
     async def context(sid: str):

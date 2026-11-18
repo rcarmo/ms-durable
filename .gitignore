@@ -14,3 +14,7 @@ __pycache__/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+# Local verification artifacts
+/evidence/
+/docs/architecture.png

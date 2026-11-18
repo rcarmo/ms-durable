@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -46,6 +47,10 @@ CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);
 CREATE TABLE IF NOT EXISTS approvals(
  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, turn_id TEXT,
  request TEXT NOT NULL, status TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS turn_images(
+ turn_id TEXT NOT NULL REFERENCES turns(id), ordinal INTEGER NOT NULL,
+ name TEXT NOT NULL, mime TEXT NOT NULL, digest TEXT NOT NULL, content BLOB NOT NULL,
+ PRIMARY KEY(turn_id,ordinal));
 CREATE TABLE IF NOT EXISTS sdk_files(
  namespace TEXT NOT NULL, path TEXT NOT NULL, content BLOB,
  is_directory INTEGER NOT NULL, mtime REAL NOT NULL,
@@ -56,6 +61,16 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             await self.db.execute(
                 "ALTER TABLE turns ADD COLUMN kind TEXT NOT NULL DEFAULT 'prompt'"
             )
+        names = {row["name"] for row in columns}
+        for name, datatype in [("sender_id", "TEXT"), ("finished_at", "REAL")]:
+            if name not in names:
+                await self.db.execute(f"ALTER TABLE turns ADD COLUMN {name} {datatype}")
+        columns = await (await self.db.execute("PRAGMA table_info(sessions)")).fetchall()
+        if "handle" not in {row["name"] for row in columns}:
+            await self.db.execute("ALTER TABLE sessions ADD COLUMN handle TEXT")
+        await self.db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS session_handle ON sessions(handle)"
+        )
         # Never re-send an ambiguous admitted prompt or replay an unknown external effect.
         await self.db.execute(
             "UPDATE turns SET status='interrupted',error='Server stopped during this turn; inspect history before continuing.' WHERE status='running'"
@@ -90,12 +105,16 @@ CREATE TABLE IF NOT EXISTS sdk_files(
         async with self.transaction() as db:
             await db.execute(sql, args)
 
-    async def create_session(self, title, model):
+    async def create_session(self, title, model, handle=None):
+        handle = self.normalize_handle(handle) if handle is not None else None
         sid = uid()
-        await self.execute(
-            "INSERT INTO sessions(id,title,model,created_at) VALUES(?,?,?,?)",
-            (sid, title, model, time.time()),
-        )
+        try:
+            await self.execute(
+                "INSERT INTO sessions(id,title,model,created_at,handle) VALUES(?,?,?,?,?)",
+                (sid, title, model, time.time(), handle),
+            )
+        except aiosqlite.IntegrityError:
+            raise ValueError("Agent name already exists") from None
         return await self.session(sid)
 
     async def session(self, sid):
@@ -104,19 +123,57 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             raise KeyError("Unknown session")
         return row
 
-    async def submit(self, sid, prompt, request_id, kind="prompt"):
+    @staticmethod
+    def normalize_handle(handle):
+        handle = handle.strip().removeprefix("@").lower()
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", handle):
+            raise ValueError(
+                "Use an agent name of 1–32 letters, digits, underscores or hyphens, starting with a letter"
+            )
+        return handle
+
+    async def resolve_session(self, target):
+        if not target.startswith("@"):
+            return await self.session(target)
+        row = await self.one(
+            "SELECT * FROM sessions WHERE handle=?", (self.normalize_handle(target),)
+        )
+        if row is None:
+            raise KeyError("Unknown agent")
+        return row
+
+    async def submit(self, sid, prompt, request_id, kind="prompt", *, images=(), sender_id=None):
         await self.session(sid)
         async with self.transaction() as db:
-            await db.execute(
-                "INSERT OR IGNORE INTO turns(id,session_id,request_id,prompt,status,created_at,kind) VALUES(?,?,?,?, 'queued',?,?)",
-                (uid(), sid, request_id, prompt, time.time(), kind),
+            insert = await db.execute(
+                "INSERT OR IGNORE INTO turns(id,session_id,request_id,prompt,status,created_at,kind,sender_id) "
+                "VALUES(?,?,?,?, 'queued',?,?,?)",
+                (uid(), sid, request_id, prompt, time.time(), kind, sender_id),
             )
             cursor = await db.execute(
                 "SELECT * FROM turns WHERE session_id=? AND request_id=?", (sid, request_id)
             )
             result = dict(await cursor.fetchone())
-            if result["prompt"] != prompt or result["kind"] != kind:
+            tid = result["id"]
+            if insert.rowcount:
+                await db.executemany(
+                    "INSERT INTO turn_images VALUES(?,?,?,?,?,?)",
+                    [(tid, ordinal, *image) for ordinal, image in enumerate(images)],
+                )
+            cursor = await db.execute(
+                "SELECT ordinal,name,mime,digest FROM turn_images WHERE turn_id=? ORDER BY ordinal",
+                (tid,),
+            )
+            media = [dict(row) for row in await cursor.fetchall()]
+            if (
+                result["prompt"] != prompt
+                or result["kind"] != kind
+                or result["sender_id"] != sender_id
+                or [(item["name"], item["mime"], item["digest"]) for item in media]
+                != [image[:3] for image in images]
+            ):
                 raise ValueError("request_id already used for different input")
+            result["images"] = media
             return result
 
     async def event(self, sid, tid, kind, data, sdk_id=None):
@@ -125,21 +182,34 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             (sid, tid, sdk_id, kind, json.dumps(data, default=str)),
         )
 
-    async def events(self, sid, after=0):
+    async def events(self, sid, after=0, limit=2000):
         rows = await self.rows(
-            "SELECT * FROM events WHERE session_id=? AND seq>? ORDER BY seq LIMIT 2000",
-            (sid, after),
+            "SELECT * FROM events WHERE session_id=? AND seq>? ORDER BY seq LIMIT ?",
+            (sid, after, limit),
         )
         for row in rows:
             row["data"] = json.loads(row["data"])
         return rows
 
     async def snapshot(self, sid):
+        session = await self.session(sid)
+        turns = await self.rows(
+            "SELECT turns.*, sessions.handle AS sender_handle FROM turns LEFT JOIN sessions ON sessions.id=turns.sender_id "
+            "WHERE turns.session_id=? ORDER BY turns.created_at",
+            (sid,),
+        )
+        images = {}
+        for row in await self.rows(
+            "SELECT turn_id,ordinal,name,mime,digest FROM turn_images JOIN turns ON turns.id=turn_images.turn_id "
+            "WHERE turns.session_id=? ORDER BY ordinal",
+            (sid,),
+        ):
+            images.setdefault(row.pop("turn_id"), []).append(row)
+        for turn in turns:
+            turn["images"] = images.get(turn["id"], [])
         return {
-            "session": await self.session(sid),
-            "turns": await self.rows(
-                "SELECT * FROM turns WHERE session_id=? ORDER BY created_at", (sid,)
-            ),
+            "session": session,
+            "turns": turns,
             "events": await self.events(sid),
             "approvals": await self.rows(
                 "SELECT id,request,status FROM approvals WHERE session_id=? AND status='pending'",
