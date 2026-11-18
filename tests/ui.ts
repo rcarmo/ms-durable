@@ -30,6 +30,8 @@ const events = [
 ];
 const pendingApproval = {id: 'p1', status: 'pending', request: JSON.stringify({kind: 'write', fileName: 'summary.md', intention: 'Create the summary file'})};
 let approvals = [pendingApproval];
+const plan = {revision:1, explanation:'Release checklist', items:[{step:'Inspect',status:'in_progress'}]};
+let emitPlan = () => {};
 const calls: string[] = [];
 const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async fetch(request) {
   const url = new URL(request.url), path = url.pathname;
@@ -39,7 +41,7 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   const json = (value: unknown) => Response.json(value);
   if (path === '/api/config') return json({models, skills: ['memento'], mcp_servers: ['memento'], working_directory: '/srv/workspace', auth_source: 'Copilot CLI login'});
   if (path === '/api/sessions' && request.method === 'GET') return json(sessions);
-  if (path === '/api/sessions/s1') return json({session: sessions[0], turns, events, approvals});
+  if (path === '/api/sessions/s1') return json({session: sessions[0], turns, events, approvals, plan});
   if (path === '/api/sessions/s1/turns/t1/images/0') return new Response(svg, {headers:{'Content-Type':'image/svg+xml'}});
   if (path === '/api/sessions/s1/turns/t1/images/1') return new Response(png, {headers:{'Content-Type':'image/png'}});
   if (path === '/api/sessions/s1/timeline') return json(url.searchParams.get('after') === '0' ? {events:events.slice(0,2),next_after:2} : {events:events.slice(2),next_after:null});
@@ -51,7 +53,10 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   }
   if (path === '/api/sessions/s1/turns/upload/images/0') return new Response(svg,{headers:{'Content-Type':'image/svg+xml'}});
   if (path === '/api/sessions/s2') return json({session: sessions[1], turns: [], events: [], approvals: []});
-  if (path.endsWith('/events')) return new Response(new ReadableStream({start(c) { c.enqueue(new TextEncoder().encode(': open\n\n')); }}), {headers: {'Content-Type': 'text/event-stream'}});
+  if (path.endsWith('/events')) return new Response(new ReadableStream({start(c) {
+    const encode = (s:string) => new TextEncoder().encode(s); c.enqueue(encode(': open\n\n'));
+    if (path.includes('/s1/')) emitPlan = () => c.enqueue(encode('data: ' + JSON.stringify({seq:5,type:'app.plan_updated',data:{revision:2,explanation:plan.explanation,items:[{step:'Inspect',status:'completed'}]}}) + '\n\n'));
+  }}), {headers: {'Content-Type': 'text/event-stream'}});
   if (path.endsWith('/context')) return json({context: {contextInfo: {limit: 128000, totalTokens: 41200, systemTokens: 9800, toolDefinitionsTokens: 14100, conversationTokens: 17300, compactionThreshold: 102400, modelName: 'gpt-5-mini'}}, attribution: {contextAttribution: {compactions: {count: 1}}}});
   if (path.startsWith('/api/approvals/')) { approvals = []; return json({status: 'approved'}); }
   if (path.endsWith('/model') || path.endsWith('/abort') || path.endsWith('/compact')) return json({status: 'ok'});
@@ -163,6 +168,24 @@ try {
     await page.locator('#message-upload img').waitFor();
     await page.reload(); await page.locator('#message-upload img').waitFor();
     if (await page.locator('html').getAttribute('data-theme') !== 'dark') throw new Error('Theme not preserved');
+  });
+  await run('Plan panel: live updates, focus, session separation and narrow layout', {width:390,height:780}, 'light', async page => {
+    await page.goto(url + '#token=' + token);
+    await page.locator('#connection[data-state=live]').waitFor({state:'attached'});
+    await page.locator('#plan-toggle').focus(); await page.keyboard.press('Enter');
+    await page.locator('#plan-items').getByText('In progress').waitFor();
+    if (!await page.locator('#plan-close').evaluate(el => el === document.activeElement)) throw new Error('Plan should move focus on open');
+    emitPlan(); await page.locator('#plan-summary').filter({hasText:'1 of 1 completed'}).waitFor();
+    const panel = (await page.locator('#plan-panel').boundingBox())!, composer = (await page.locator('#composer').boundingBox())!;
+    if (panel.x < 0 || panel.x + panel.width > 390 || panel.y + panel.height > composer.y) throw new Error('Plan panel overlaps composer or viewport');
+    await page.locator('#prompt').fill('Can still type');
+    await page.keyboard.press('Escape');
+    if (await page.locator('#plan-panel').isVisible() || !await page.locator('#plan-toggle').evaluate(el => el === document.activeElement)) throw new Error('Escape did not restore focus');
+    await page.locator('#plan-toggle').click(); await page.locator('#menu').click();
+    await page.locator('#sessions button').nth(1).click(); await page.locator('#plan-summary').filter({hasText:'No plan yet.'}).waitFor();
+    await page.locator('#menu').click(); await page.locator('#sessions button').first().click();
+    await page.locator('#plan-items').getByText('In progress').waitFor();
+    await page.screenshot({path: root + '/plan-mobile.png'});
   });
   console.log(JSON.stringify({checks, evidence: root}, null, 2));
 } finally {

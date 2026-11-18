@@ -127,6 +127,15 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 @media(prefers-color-scheme:light){:root[data-theme=dark]{--bg:#1f1f1f;--panel:#292929;--raised:#333;--hover:#383838;--selected:#414141;--border:#525252;--text:#fff;--muted:#c2c2c2;--accent:#75b6e7;--accent-ink:#102331;--danger:#ff99a4;--ok:#9ad29a;--warn:#f2c276;color-scheme:dark}}
 @media(prefers-color-scheme:dark){:root[data-theme=light]{--bg:#fff;--panel:#f5f5f5;--raised:#fff;--hover:#ebebeb;--selected:#e0e0e0;--border:#d1d1d1;--text:#242424;--muted:#616161;--accent:#0f6cbd;--accent-ink:#fff;--danger:#b10e1c;--ok:#107c10;--warn:#835b00;color-scheme:light}}
 .tool-syntax .key{color:var(--accent)}.tool-syntax .literal{color:var(--muted)}
+#conversation-body{position:relative;display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
+#plan-panel{position:absolute;inset:8px 8px 8px auto;z-index:3;display:flex;flex-direction:column;width:min(352px,calc(100% - 16px));background:var(--raised);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px #0003}
+#plan-panel header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px 8px 16px;border-bottom:1px solid var(--border)}
+#plan-content{overflow:auto;overscroll-behavior:contain;padding:12px 16px}
+#plan-items{list-style:none;padding:0;margin:0}#plan-items li{display:grid;grid-template-columns:16px minmax(0,1fr);gap:8px;padding:8px 0;overflow-wrap:anywhere}#plan-items li+li{border-top:1px solid var(--border)}
+#plan-items svg{width:16px;height:16px;margin-top:2px;color:var(--muted)}
+#plan-items [data-status=in_progress] .plan-step{font-weight:600}#plan-items [data-status=in_progress] svg{color:var(--accent)}
+.plan-status{display:block;color:var(--muted);font-size:12px}.plan-description{margin-bottom:8px;overflow-wrap:anywhere}
+#plan-toggle[aria-expanded=true]{background:var(--selected)}
 </style>
 </head>
 <body>
@@ -138,6 +147,8 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
 <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></symbol>
 <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+<symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></symbol>
 <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
 <symbol id="i-x-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></symbol>
 <symbol id="i-loader" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
@@ -173,14 +184,25 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
   <header class="topbar">
     <button id="menu" type="button" class="iconbtn" aria-label="Conversations" aria-expanded="false" aria-controls="sidebar"><svg class="icon"><use href="#i-menu"/></svg></button>
     <h2 id="title">New conversation</h2>
+    <button id="plan-toggle" type="button" aria-expanded="false" aria-controls="plan-panel" hidden>Plan</button>
     <button id="timeline-button" type="button" title="Inspect session events" hidden>Timeline</button>
     <button id="context-button" type="button" aria-label="Context usage" title="Context usage and compaction" hidden><svg class="icon"><use href="#i-gauge"/></svg><span id="context-label"></span></button>
   </header>
   <div id="notice" role="alert" hidden><svg class="icon" style="color:var(--warn)"><use href="#i-alert"/></svg><p></p><button type="button" class="iconbtn" aria-label="Dismiss" id="notice-close"><svg class="icon"><use href="#i-close"/></svg></button></div>
+  <div id="conversation-body">
   <section id="transcript" aria-label="Conversation" aria-live="polite">
     <div class="content" id="turns"></div>
     <div id="empty"><h2>Start a conversation</h2><p>Type a message below.</p></div>
   </section>
+  <section id="plan-panel" role="region" aria-labelledby="plan-heading" hidden>
+    <header><h2 id="plan-heading">Plan</h2><button id="plan-close" type="button" class="iconbtn" aria-label="Close plan"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div id="plan-content" tabindex="0" aria-label="Plan checklist">
+      <p id="plan-summary" class="muted" role="status">No plan yet.</p>
+      <p id="plan-explanation" class="plan-description" hidden></p>
+      <ol id="plan-items"></ol>
+    </div>
+  </section>
+  </div>
   <footer class="composer">
   <button id="jump" type="button" aria-label="Jump to latest" title="Jump to latest" hidden><svg class="icon"><use href="#i-down"/></svg></button>
     <section id="approvals" aria-label="Permission requests"></section>
@@ -285,6 +307,7 @@ function controls() {
   $('new').disabled = sending;
   $('context-button').hidden = !selected;
   $('timeline-button').hidden = !selected;
+  $('plan-toggle').hidden = !selected;
   $('agent-field').hidden = Boolean(selected);
   $('attach').disabled = sending || draftImages().length >= 3;
   $('agent-name').disabled = sending;
@@ -635,9 +658,34 @@ function render(ctx) {
   controls();
   if (follow) bottom(); else { $('transcript').scrollTop = scrollTop; $('jump').hidden = false; }
 }
+function setPlanOpen(open, returnFocus = false) {
+  $('plan-panel').hidden = !open; $('plan-toggle').setAttribute('aria-expanded', String(open));
+  if (open) $('plan-close').focus();
+  else if (returnFocus && !$('plan-toggle').hidden) $('plan-toggle').focus();
+}
+function acceptPlan(ctx, plan) {
+  if (context !== ctx || !plan || (ctx.plan && plan.revision <= ctx.plan.revision)) return;
+  ctx.plan = plan; drawPlan();
+}
+function drawPlan() {
+  const {items = [], explanation = ''} = context?.plan || {};
+  const done = items.filter(item => item.status === 'completed').length;
+  text($('plan-summary'), items.length ? done + ' of ' + items.length + ' completed' : 'No plan yet.');
+  text($('plan-explanation'), explanation); $('plan-explanation').hidden = !explanation;
+  const status = {pending: ['circle','Pending'], in_progress:['clock','In progress'], completed:['check','Completed']};
+  $('plan-items').replaceChildren(...items.map(item => {
+    const li = node('li'); li.dataset.status = item.status;
+    const [glyph, label] = status[item.status], body = node('div');
+    body.append(node('span', 'plan-step', item.step), node('span', 'plan-status', label));
+    li.append(icon(glyph), body); return li;
+  }));
+}
+$('plan-toggle').onclick = () => setPlanOpen($('plan-panel').hidden);
+$('plan-close').onclick = () => setPlanOpen(false, true);
 function applyEvent(ctx, event) {
   if (!Number.isFinite(event.seq)) return;
   ctx.after = Math.max(ctx.after, event.seq); ctx.events.set(event.seq, event);
+  if (event.type === 'app.plan_updated') acceptPlan(ctx, event.data);
   if (event.type === 'turn.updated' && event.data?.id != null) {
     const i = ctx.turns.findIndex(t => String(t.id) === String(event.data.id));
     if (i < 0) ctx.turns.push(event.data); else ctx.turns[i] = {...ctx.turns[i], ...event.data};
@@ -647,6 +695,7 @@ async function snapshot(ctx) {
   const data = await json('/api/sessions/' + encodeURIComponent(ctx.id), {signal:ctx.controller.signal});
   if (context !== ctx) return;
   ctx.turns = data.turns || []; ctx.ready = true;
+  acceptPlan(ctx, data.plan);
   for (const e of data.events || []) { ctx.events.set(e.seq, e); ctx.after = Math.max(ctx.after, e.seq); }
   text($('title'), data.session.handle ? '@' + data.session.handle + ' · ' + data.session.title : data.session.title || 'Untitled conversation');
   if (document.activeElement !== $('model')) $('model').value = data.session.model;
@@ -714,6 +763,7 @@ function selectSession(id) {
   drafts.set(selected || 'new', $('prompt').value);
   for (const url of imageURLs) URL.revokeObjectURL(url); imageURLs.clear();
   detach(); selected = id;
+  drawPlan(); if (!id) setPlanOpen(false);
   $('approvals').replaceChildren(); $('approvals').dataset.ids = '';
   $('prompt').value = drafts.get(id || 'new') || ''; grow(); drawDraftImages();
   $('turns').replaceChildren(); turnNodes.clear();
@@ -815,7 +865,11 @@ $('jump').onclick = bottom;
 $('transcript').addEventListener('scroll', () => { if (nearBottom()) $('jump').hidden = true; }, {passive:true});
 $('prompt').oninput = () => { drafts.set(selected || 'new', $('prompt').value); grow(); controls(); };
 $('prompt').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); $('composer').requestSubmit(); } };
-document.addEventListener('keydown', event => { if (event.key === 'Escape' && $('sidebar').classList.contains('open')) openSidebar(false); });
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
+  if ($('sidebar').classList.contains('open')) openSidebar(false);
+  else if (!$('plan-panel').hidden) { event.preventDefault(); setPlanOpen(false, true); }
+});
 $('composer').onsubmit = async event => {
   event.preventDefault();
   const prompt = $('prompt').value.trim();

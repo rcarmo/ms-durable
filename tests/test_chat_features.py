@@ -149,3 +149,51 @@ async def test_model_can_inspect_timeline_and_attachments(store, tmp_path):
     assert base64.b64decode(result.binary_results_for_llm[0].data) == pixels
     with pytest.raises(ValueError, match="Unknown attachment"):
         await invoke("app_read_attachment", session_id=other, turn_id=turn["id"], ordinal=0)
+
+
+async def test_agent_plan_is_atomic_and_session_scoped(store, tmp_path):
+    runtime = Runtime(Settings(data=tmp_path), store)
+    sid = (await store.create_session("Review", "mock"))["id"]
+    other = (await store.create_session("Other", "mock"))["id"]
+    tool = next(t for t in runtime.tools(sid) if t.name == "app_plan")
+
+    async def call(**args):
+        return json.loads((await tool.handler(SimpleNamespace(arguments=args))).text_result_for_llm)
+
+    assert (await call(action="read"))["items"] == []
+    first = await call(
+        action="update",
+        explanation="Checks",
+        plan=[{"step": "Inspect", "status": "in_progress"}, {"step": "Verify"}],
+    )
+    assert first["revision"] == 1
+    with pytest.raises(ValueError, match="at most one"):
+        await call(
+            action="patch", patches=[{"operation": "update", "index": 2, "status": "in_progress"}]
+        )
+    assert await call(action="read") == first
+    second = await call(
+        action="patch",
+        patches=[
+            {"operation": "add", "index": 2, "step": "Document"},
+            {"operation": "update", "index": 1, "status": "completed"},
+            {"operation": "update", "index": 2, "status": "in_progress"},
+            {"operation": "remove", "index": 3},
+        ],
+    )
+    assert second["explanation"] == "Checks"
+    assert [item["step"] for item in second["items"]] == ["Inspect", "Document"]
+    assert second["revision"] == 2
+    assert (await store.snapshot(other))["plan"]["revision"] == 0
+    assert [e["data"] for e in await store.events(sid) if e["type"] == "app.plan_updated"] == [
+        first,
+        second,
+    ]
+    from ms_durable.store import Store
+
+    reopened = Store(store.path)
+    await reopened.open()
+    try:
+        assert (await reopened.snapshot(sid))["plan"] == second
+    finally:
+        await reopened.close()

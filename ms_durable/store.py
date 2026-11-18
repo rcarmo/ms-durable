@@ -47,6 +47,8 @@ CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);
 CREATE TABLE IF NOT EXISTS approvals(
  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, turn_id TEXT,
  request TEXT NOT NULL, status TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS session_plans(
+ session_id TEXT PRIMARY KEY REFERENCES sessions(id), data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS turn_images(
  turn_id TEXT NOT NULL REFERENCES turns(id), ordinal INTEGER NOT NULL,
  name TEXT NOT NULL, mime TEXT NOT NULL, digest TEXT NOT NULL, content BLOB NOT NULL,
@@ -191,6 +193,36 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             row["data"] = json.loads(row["data"])
         return rows
 
+    @staticmethod
+    def _plan_data(row):
+        return json.loads(row["data"]) if row else {"revision": 0, "explanation": "", "items": []}
+
+    async def plan(self, sid):
+        row = await self.one("SELECT data FROM session_plans WHERE session_id=?", (sid,))
+        return self._plan_data(row)
+
+    async def change_plan(self, sid, tid, change):
+        async with self.transaction() as db:
+            cursor = await db.execute("SELECT data FROM session_plans WHERE session_id=?", (sid,))
+            previous = self._plan_data(await cursor.fetchone())
+            value = change.apply(previous)
+            if (
+                value["items"] == previous["items"]
+                and value["explanation"] == previous["explanation"]
+            ):
+                return previous
+            data = json.dumps(value)
+            await db.execute(
+                "INSERT INTO session_plans(session_id,data) VALUES(?,?) "
+                "ON CONFLICT(session_id) DO UPDATE SET data=excluded.data",
+                (sid, data),
+            )
+            await db.execute(
+                "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
+                (sid, tid, "app.plan_updated", data),
+            )
+            return value
+
     async def snapshot(self, sid):
         session = await self.session(sid)
         turns = await self.rows(
@@ -211,6 +243,7 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             "session": session,
             "turns": turns,
             "events": await self.events(sid),
+            "plan": await self.plan(sid),
             "approvals": await self.rows(
                 "SELECT id,request,status FROM approvals WHERE session_id=? AND status='pending'",
                 (sid,),

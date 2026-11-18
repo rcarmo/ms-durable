@@ -20,6 +20,7 @@ from copilot.rpc import (
 from copilot.tools import Tool, ToolBinaryResult, ToolResult
 
 from .config import Settings
+from .plans import PlanInput
 from .providers import Providers
 from .session_fs import SQLiteSessionFS
 from .store import Store, uid
@@ -245,6 +246,18 @@ class Runtime:
                 handler=handle,
             )
 
+        async def plan(args):
+            change = PlanInput.model_validate(self.redact(args))
+            if change.action == "read":
+                if (
+                    change.plan is not None
+                    or change.patches is not None
+                    or change.explanation is not None
+                ):
+                    raise ValueError("Read takes no plan, patches or explanation")
+                return await self.store.plan(own_sid)
+            return await self.store.change_plan(own_sid, self.active.get(own_sid), change)
+
         async def sessions(args):
             return await self.store.rows(
                 "SELECT id,title,model,created_at,handle FROM sessions ORDER BY created_at DESC"
@@ -340,6 +353,7 @@ class Runtime:
             return await self.metadata(args.get("session_id", own_sid))
 
         string = {"type": "string"}
+        plan_status = {"type": "string", "enum": ["pending", "in_progress", "completed"]}
         return [
             make(
                 "app_context_status",
@@ -368,6 +382,44 @@ class Runtime:
                 {},
                 [],
                 sessions,
+            ),
+            make(
+                "app_plan",
+                "Manage the current conversation’s Plan sidebar. Read the checklist, replace it with update, "
+                "or apply a batch of add/update/remove patches in order. Indexes are 1-based; add without "
+                "an index appends. Mark at most one step in_progress. Keep the plan current as work proceeds.",
+                {
+                    "action": {"type": "string", "enum": ["read", "update", "patch"]},
+                    "explanation": string,
+                    "plan": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["step"],
+                            "properties": {"step": string, "status": plan_status},
+                            "additionalProperties": False,
+                        },
+                    },
+                    "patches": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["operation"],
+                            "properties": {
+                                "operation": {
+                                    "enum": ["add", "update", "remove"],
+                                    "type": "string",
+                                },
+                                "index": {"type": "integer", "minimum": 1},
+                                "step": string,
+                                "status": plan_status,
+                            },
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                ["action"],
+                plan,
             ),
             make(
                 "app_observe_session",
