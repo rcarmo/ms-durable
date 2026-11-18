@@ -52,6 +52,47 @@ class FakeClient:
         pass
 
 
+async def test_queued_delegate_is_not_sent_after_parent_settles(store, tmp_path):
+    client = FakeClient()
+    runtime = Runtime(Settings(data=tmp_path), store, client)
+    sid = (await store.create_session("Caller", "mock"))["id"]
+    target = (await store.create_session("Worker", "mock", "worker"))["id"]
+    await store.rename_session(target, "Worker", "worker", True)
+    parent = await store.submit(sid, "Parent", "parent")
+    await store.execute("UPDATE turns SET status='running' WHERE id=?", (parent["id"],))
+    await store.submit(
+        target,
+        "Never run",
+        f"delegate:{parent['id']}:batch",
+        kind="delegation",
+        sender_id=sid,
+        outgoing=(parent["id"], "@worker", "Never run", None),
+    )
+    await runtime.abort(sid)
+    runtime.kick(target)
+    await asyncio.wait_for(runtime.workers[target], 3)
+    snapshot = await store.snapshot(target)
+    assert snapshot["turns"][0]["status"] == "cancelled"
+    assert snapshot["events"][-1]["type"] == "app.turn_settled"
+    assert not client.entered.is_set()
+    await runtime.close()
+
+
+async def test_model_changes_apply_only_when_worker_sends(store, tmp_path):
+    client = FakeClient()
+    client.session.wait.set()
+    runtime = Runtime(Settings(data=tmp_path), store, client)
+    sid = (await store.create_session("Model", "mock"))["id"]
+    await runtime.session(sid)
+    await runtime.change_model(sid, "new-model", deferred=True)
+    assert not hasattr(client.session, "model")
+    await runtime.enqueue(sid, "Use new model", "next")
+    await asyncio.wait_for(runtime.workers[sid], 3)
+    assert client.session.model == "new-model"
+    assert client.session.sent == ["Use new model"]
+    await runtime.close()
+
+
 async def test_abort_during_construction_never_sends(store, tmp_path):
     client = FakeClient(held=True)
     runtime = Runtime(Settings(data=tmp_path), store, client)

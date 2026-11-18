@@ -194,9 +194,16 @@ class Runtime:
         epoch = self.abort_epochs.get(sid, 0)
         turn = await self.store.submit(sid, prompt, request_id, kind=kind, **options)
         if epoch != self.abort_epochs.get(sid, 0):
-            await self.store.execute(
-                "UPDATE turns SET status='cancelled' WHERE id=? AND status='queued'", (turn["id"],)
-            )
+            async with self.store.transaction() as db:
+                updated = await db.execute(
+                    "UPDATE turns SET status='cancelled' WHERE id=? AND status='queued'",
+                    (turn["id"],),
+                )
+                if updated.rowcount:
+                    await db.execute(
+                        "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
+                        (sid, turn["id"], "app.turn_settled", "{}"),
+                    )
             return await self.store.one("SELECT * FROM turns WHERE id=?", (turn["id"],))
         self.kick(sid)
         return turn
@@ -845,8 +852,7 @@ class Runtime:
             raise ValueError("Model is not in the available Copilot model catalogue")
         if sid in self.active and not deferred:
             raise ValueError("Session is busy; change applies only at a turn boundary")
-        if sid in self.sessions and sid not in self.active:
-            await self.sessions[sid].set_model(model)
+        # Only the worker changes the native model, immediately before sending a turn.
         await self.store.execute("UPDATE sessions SET model=? WHERE id=?", (model, sid))
         return {"session_id": sid, "model": model, "applies": "next turn"}
 
@@ -1113,6 +1119,18 @@ class Runtime:
             try:
                 self.active[sid] = tid
                 async with self.store.transaction() as db:
+                    if turn["kind"] == "delegation":
+                        parent_id = turn["request_id"].split(":", 2)[1]
+                        parent = await db.execute(
+                            "SELECT 1 FROM turns WHERE id=? AND session_id=? AND status='running'",
+                            (parent_id, turn["sender_id"]),
+                        )
+                        if not await parent.fetchone():
+                            await db.execute(
+                                "UPDATE turns SET status='cancelled',error='Delegating turn is no longer active.' WHERE id=? AND status='queued'",
+                                (tid,),
+                            )
+                            continue
                     claimed = await db.execute(
                         "UPDATE turns SET status='running' WHERE id=? AND status='queued'", (tid,)
                     )

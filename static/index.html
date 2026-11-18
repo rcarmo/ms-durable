@@ -431,6 +431,7 @@ function renderApprovals(items) {
   const box = $('approvals'), ids = items.map(item => item.id).join(',');
   if (box.dataset.ids === ids) return;
   box.dataset.ids = ids; box.replaceChildren();
+  const ctx = context;
   for (const item of items) {
     const request = parse(item.request) || {}, [, title, subject, why] = describeRequest(request);
     const card = node('div', 'approval'), head = node('header');
@@ -445,8 +446,19 @@ function renderApprovals(items) {
       text(button, label);
       button.onclick = async () => {
         actions.querySelectorAll('button').forEach(b => { b.disabled = true; });
-        try { await json('/api/approvals/' + encodeURIComponent(item.id), {method:'POST', body:{allow, remember}}); card.remove(); box.dataset.ids = ''; if (context) { context.approvalCount = Math.max(0, (context.approvalCount || 1) - 1); render(context); } scheduleSnapshot(context); }
-        catch(error) { notice(error.message); actions.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
+        try {
+          await json('/api/approvals/' + encodeURIComponent(item.id), {method:'POST', body:{allow, remember}});
+          if (context !== ctx) return;
+          if (card.parentNode === box) {
+            card.remove(); box.dataset.ids = '';
+            ctx.approvalCount = box.childElementCount;
+            render(ctx);
+          }
+          scheduleSnapshot(ctx);
+        } catch(error) {
+          if (context === ctx) notice(error.message);
+          actions.querySelectorAll('button').forEach(b => { b.disabled = false; });
+        }
       };
       actions.append(button);
     }
@@ -1425,7 +1437,8 @@ $('composer').onsubmit = async event => {
     imageDrafts.delete(id); imageDrafts.delete('new'); drawDraftImages();
     if (context?.id === id) {
       const index = context.turns.findIndex(t => String(t.id) === String(turn.id));
-      if (index < 0) context.turns.push(turn); else context.turns[index] = turn;
+      // An SSE-triggered snapshot may already have a newer state for this turn.
+      if (index < 0) context.turns.push(turn);
       render(context); scheduleSnapshot(context); bottom();
     }
   } catch (e) { notice(e.message + ' Your message was kept; sending it again will not duplicate it.'); }

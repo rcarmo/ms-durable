@@ -422,6 +422,28 @@ try {
       await page.locator('#message-scroll-34').waitFor({state:'attached'}); await atEnd();
     } finally { timelineListener = null; }
   });
+  await run('late submission response cannot roll back a settled turn', {width:1024,height:660}, 'light', async page => {
+    const queued = {id:'fast-turn',status:'queued',prompt:'Test the response race'};
+    const settled = {...queued,status:'done',answer:'Already finished'};
+    let release!: () => void, submitted = false;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/sessions/s1/turns', async route => {
+      submitted = true;
+      emitChatUpdate({seq:9001, turn_id:queued.id, type:'app.turn_settled', data:{}});
+      await held;
+      await route.fulfill({json:queued});
+    });
+    await page.route('**/api/sessions/s1', route => route.fulfill({json:{session:sessions[0],turns:submitted ? [settled] : [],events:[],approvals:[]}}));
+    await page.goto(url + '#token=' + token);
+    await page.locator('#connection[data-state=live]').waitFor();
+    try {
+      await page.locator('#prompt').fill(queued.prompt);
+      await page.locator('#send').click();
+      await page.locator('#message-fast-turn .answer').getByText(settled.answer).waitFor();
+    } finally { release(); }
+    await page.waitForFunction(() => (document.getElementById('prompt') as HTMLTextAreaElement).value === '' && !document.querySelector('.session-select[disabled]'));
+    if ((await page.locator('#message-fast-turn .answer').textContent())?.trim() !== settled.answer) throw new Error('Late response overwrote settled answer');
+  });
   await run('link previews: opt-in settings and cached thumbnail', {width:1280,height:860}, 'light', async page => {
     await page.goto(url + '#token=' + token);
     const newTab = '[target="_blank"][rel="noopener noreferrer"]';

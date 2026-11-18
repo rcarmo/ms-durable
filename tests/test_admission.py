@@ -23,6 +23,11 @@ async def test_abort_during_submit_cancels_late_commit(store, tmp_path, monkeypa
     result = await pending
     assert result["status"] == "cancelled"
     assert not runtime.workers
+    snapshot = await store.snapshot(sid)
+    assert [event["type"] for event in snapshot["events"]] == [
+        "app.turn_queued",
+        "app.turn_settled",
+    ]
 
 
 async def test_known_secrets_are_redacted_from_nested_output(store, tmp_path):
