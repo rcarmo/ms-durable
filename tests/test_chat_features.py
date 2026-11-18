@@ -366,7 +366,8 @@ async def test_timeline_fts_backfill_updates_and_session_scope(tmp_path):
 
 async def test_named_chat_is_deduplicated_and_one_hop(store, tmp_path, monkeypatch):
     runtime = Runtime(Settings(data=tmp_path), store)
-    monkeypatch.setattr(runtime, "kick", lambda sid: None)
+    wakeups = []
+    monkeypatch.setattr(runtime, "kick", wakeups.append)
     alice = (await store.create_session("Review", "mock", "@Alice"))["id"]
     bob = (await store.create_session("Build", "mock", "bob"))["id"]
 
@@ -407,6 +408,7 @@ async def test_named_chat_is_deduplicated_and_one_hop(store, tmp_path, monkeypat
         await reply.handler(args)
     await store.execute("UPDATE turns SET status='running' WHERE id=?", (message["id"],))
     answer = json.loads((await reply.handler(args)).text_result_for_llm)
+    assert answer["status"] == "queued" and wakeups[-1] == alice
     assert json.loads((await reply.handler(args)).text_result_for_llm)["id"] == answer["id"]
     received = (await store.snapshot(alice))["turns"][-1]
     assert (
@@ -416,10 +418,18 @@ async def test_named_chat_is_deduplicated_and_one_hop(store, tmp_path, monkeypat
         received["sender_handle"],
     ) == (
         "chat_reply",
-        "done",
+        "queued",
         "Build passed",
         "bob",
     )
+    assert received["id"] == answer["id"]
+    runtime.active[alice] = received["id"]
+    await store.execute("UPDATE turns SET status='running' WHERE id=?", (received["id"],))
+    with pytest.raises(ValueError, match="cannot start another chat"):
+        await send(alice, "@bob")
+    alice_reply = next(t for t in runtime.tools(alice) if t.name == "reply_chat")
+    with pytest.raises(ValueError, match="active inter-session"):
+        await alice_reply.handler(args)
     events = await store.events(alice)
     assert [e["type"] for e in events if e["turn_id"] == answer["id"]] == ["app.chat_reply"]
     assert len((await store.snapshot(bob))["sent_messages"]) == 1

@@ -283,6 +283,21 @@ async def test_native_azure_routing_resume_and_prefix(
         )
         assert all(b"synthetic-not-a-real-key" not in row["content"] for row in files)
         if auth == "api_key" and api_version is None:
+            delegate = (await store.create_session("Worker", "foundry/test"))["id"]
+            reply = await runtime.enqueue(
+                sid,
+                "The delegated build passed.",
+                "test-reply",
+                kind="chat_reply",
+                sender_id=delegate,
+            )
+            await asyncio.wait_for(runtime.workers[sid], 60)
+            result = await store.one("SELECT * FROM turns WHERE id=?", (reply["id"],))
+            assert result["status"] == "done", result["error"]
+            inbound = json.dumps(requests[-1]["body"]["messages"])
+            assert "Reply to a chat request you sent earlier" in inbound
+            assert "The delegated build passed." in inbound
+
             original_event = store.event
 
             async def failing_projection(session_id, turn_id, kind, *args, **kwargs):

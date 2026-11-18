@@ -469,7 +469,12 @@ class Runtime:
                 )
             active_id = self.active.get(own_sid)
             if active_id:
-                turn = await self.store.one("SELECT sender_id FROM turns WHERE id=?", (active_id,))
+                turn = await self.store.one(
+                    "SELECT sender_id,kind FROM turns WHERE id=? AND session_id=?",
+                    (active_id, own_sid),
+                )
+                if turn and turn["kind"] == "chat_reply":
+                    raise ValueError("A chat reply cannot start another chat request")
                 if turn and turn["sender_id"]:
                     raise ValueError(
                         "This turn received a chat request; use reply_chat to reply to its sender"
@@ -492,17 +497,22 @@ class Runtime:
         async def reply(args):
             active_id = self.active.get(own_sid)
             turn = await self.store.one(
-                "SELECT sender_id FROM turns WHERE id=? AND session_id=? AND status='running'",
+                "SELECT sender_id,kind FROM turns WHERE id=? AND session_id=? AND status='running'",
                 (active_id, own_sid),
             )
-            if not turn or not turn["sender_id"] or turn["sender_id"] == own_sid:
+            if (
+                not turn
+                or turn["kind"] == "chat_reply"
+                or not turn["sender_id"]
+                or turn["sender_id"] == own_sid
+            ):
                 raise ValueError("reply_chat requires an active inter-session chat request")
             target = await self.store.session(turn["sender_id"])
             prompt = args["prompt"].strip()
             if not prompt or len(prompt) > 200_000:
                 raise ValueError("Invalid chat reply")
             prompt = self.redact(prompt)
-            result = await self.store.submit(
+            result = await self.enqueue(
                 target["id"],
                 prompt,
                 "reply:" + active_id,
@@ -514,7 +524,7 @@ class Runtime:
                     prompt,
                 ),
             )
-            return {"id": result["id"], "status": "reply posted to the sender’s timeline"}
+            return {"id": result["id"], "status": result["status"]}
 
         async def model(args):
             # Applied when the next turn starts, using native SDK set_model.
@@ -661,7 +671,7 @@ class Runtime:
             ),
             make(
                 "reply_chat",
-                "Post one explicit reply to the sender of the current inter-session chat request. Use this to return the result to the requesting session; a normal final answer stays local. The reply does not start another agent turn.",
+                "Post one explicit reply to the sender of the current inter-session chat request. Use this to return the result to the requesting session; a normal final answer stays local. The reply queues a turn for the original sender, which cannot send another chat message or reply.",
                 {"prompt": string},
                 ["prompt"],
                 reply,
@@ -982,7 +992,13 @@ class Runtime:
                     if turn["sender_id"]:
                         options["source"] = AgentMessageSource(agent_id=turn["sender_id"])
                     prompt = turn["prompt"] or "[Image attached to the chat for display only.]"
-                    if turn["sender_id"]:
+                    if turn["kind"] == "chat_reply":
+                        prompt = (
+                            "[Reply to a chat request you sent earlier. Use the result below to continue your work or "
+                            "report back to the user. This turn cannot start another chat request or send a reply.]\n\n"
+                            + prompt
+                        )
+                    elif turn["sender_id"]:
                         prompt = (
                             "[Inter-session chat request. To return your result to its sender, call reply_chat once. "
                             "A normal final answer stays in this session.]\n\n" + prompt
