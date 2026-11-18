@@ -146,6 +146,8 @@ The native filesystem adapter limits ordinary filesystem requests to the workspa
 
 **Neither permissions nor the filesystem adapter is a sandbox.** Native shell tools run as the server user and can access anything that user can access. Path checks do not protect against a hostile process racing symlinks. Use a dedicated OS account or an isolated container/VM with restricted mounts and network access before running untrusted prompts, repositories, skills or MCP tools. Redaction is not a substitute for that isolation.
 
+In short, don't give gasoline and matches to this thing. It's a reusable module for me to build upon, not an enterprise-grade thing. Yet.
+
 ## Verification
 The [Fluent web design plan](docs/fluent-web-plan.md) records the visual rules, implementation order and browser acceptance checks.
 
