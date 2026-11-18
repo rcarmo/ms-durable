@@ -1,17 +1,16 @@
 # MS Durable
 
 MS Durable is a small asyncio/FastAPI host for the Microsoft Copilot SDK, with a SQLite session store and a browser chat interface.
-This is an independent project, not an official Microsoft project. I built it as a tech demo for the Microsoft Copilot SDK and because I needed a reusable `pi-durable`-like service and starter chat app for other projects.
 
+**This is not an official Microsoft project.** I built it partly as tech demo for the Microsoft Copilot SDK and partly because I needed a reusable `pi-durable`-like service and starter chat app for other projects.
 ![Architecture: browser, FastAPI host, native Copilot runtime and SQLite](docs/architecture.svg)
 
-Copilot owns inference, coding tools, the agent loop, `AGENTS.md`, skills, MCP, compaction and transcript recovery. This application adds a session catalogue, a durable input queue, permission decisions, event projection and a SQLite-backed native session filesystem. It does not implement another agent loop.
+Copilot owns inference, coding tools, the agent loop, `AGENTS.md`, skills, MCP, compaction and transcript recovery. 
 
-Tested with `microsoft-copilot-sdk==2.0.1` and Copilot runtime `1.0.114`. The SDK's named-provider, token-provider and context APIs are experimental.
-
+My `asyncio` shell adds a session catalogue, a durable input queue, permission decisions, event projection and a SQLite-backed native session filesystem that serves as an _approximation_ to Pi's durable storage. Since the current Copilot SDK runs as an external process, transactional guarantees are... weak, but good enough to play around with and prototype.
 ## Run from source
 
-Requires Python 3.11+, Bun and Linux. Installation uses the pinned [requirements.lock](requirements.lock) and Bun lockfile. The development install includes Azure Identity for Entra authentication.
+Requires Python 3.11+, Bun and Linux. Installation uses the pinned [requirements.lock](requirements.lock) and Bun lockfile. The development install includes Azure Identity for Entra authentication, because one of the uses I have for this is to talk directly to Microsoft Foundry using system managed identities.
 
 ```sh
 make install
@@ -19,11 +18,13 @@ make check
 make run
 ```
 
-Open `http://127.0.0.1:8015`. Enter the token from `data/web-token`, or set `MS_DURABLE_TOKEN` before starting the server. The token is not printed or put in a URL. The UI keeps it in browser session storage.
+Open `http://127.0.0.1:8015`. Enter the token from `data/web-token`, or set `MS_DURABLE_TOKEN` before starting the server. The token is not printed or put in a URL for, well, obvious reasons, and the UI keeps it in browser session storage because that is the laziest thing I could do.
 
-By default the server reads the existing Pi GitHub Copilot login from `~/.pi/agent/auth.json`. It does not update that file. `COPILOT_GITHUB_TOKEN` takes precedence. A configured BYOK provider can run without a Copilot login.
+By default the server reads the existing Pi GitHub Copilot login from `~/.pi/agent/auth.json`, because, well, again, it was a lazy take on getting this going.`COP ILOT_GITHUB_TOKEN` takes precedence if set, and you can configure BYOK providers (again, deploying this on Azure and pointing it at Foundry will let you use managed identities and do away with all the key management shenanigans).
 
-Use one process and one uvicorn worker per data directory. An advisory file lock rejects another application server using the same directory. Do not restart the server from one of its own active tools.
+This is also designed to use one process and one uvicorn worker per data directory, because that's what you find in most container environments. Since I know humans and agents get creative (especially wheh running tests), an advisory file lock rejects another application server using the same directory. 
+
+Do not restart the server from one of its own active tools. It won't like it.
 
 | Environment variable | Default / purpose |
 | --- | --- |
@@ -37,18 +38,18 @@ Use one process and one uvicorn worker per data directory. An advisory file lock
 | `MS_DURABLE_MCP_FILE` | Optional server-owned MCP JSON file |
 | `MS_DURABLE_SKILLS` | OS-path-separated native skill directories |
 | `MS_DURABLE_TLS_KEY`, `MS_DURABLE_TLS_CERT` | Optional uvicorn TLS files |
-| `MS_DURABLE_PREVIEW_DOMAINS` | Comma-separated HTTPS host allowlist for link previews (empty by default) |
 
-Use HTTPS for remote access, either directly or through a reverse proxy which forwards streaming responses without buffering. The application does not manage certificates or install a service.
+This uses SSE for transport, and I recommend HTTPS for remote access, either directly or through a reverse proxy which forwards streaming responses without buffering .The application does not manage certificates or install a service (again, designed to run in Azure PaaS or with an App Gateway in front).
 
 ## Browser and application tools
+
+I may have gone a bit overboard for a baseline shell.
 
 The UI has independent conversations, streaming text, expandable tool activity, a durable queue, approvals, cancellation, a model picker and native context/compaction controls. Model changes apply at a turn boundary. The UI renders messages with bundled Markdown-it, with raw HTML disabled. On reconnect it reconciles the snapshot and resumes SSE from its last sequence number.
 
 - **Appearance:** follow the system theme or choose light or dark in Settings.
 - **Commands:** type `/` in the composer for shortcuts to New chat, Plan, Context, Rename and Settings.
 - **Images:** attach PNG, JPEG, GIF, WebP or SVG (up to three per message, 1 MiB each). The original bytes live in SQLite and an authenticated media route serves them. The browser displays SVG in image context. Images are not added automatically to model requests. The model can inspect them on demand with the attachment tool.
-- **Link previews:** off by default. Enable them in Settings for configured domains, or opt into any public HTTPS domain. The server fetches Open Graph metadata and supported thumbnails asynchronously and caches both in SQLite for 30 days. The browser only requests stored thumbnails from authenticated `/media` routes.
 - **Tool output:** activity rows show a plain-language summary. Expand a tool call for pretty-printed JSON or plain text in **Readable**. Switch to **Raw** to inspect the recorded arguments, result and error. The paginated session event log is under **Settings → Diagnostics**.
 - **Plan:** open the checklist from the chat header. It docks to the right of chat on desktop and stacks above it on narrow screens. The agent’s changes appear live; each conversation keeps its own plan in SQLite.
 - **Message references:** use the **Copy** icon for text. Select the **Reference** icon or the timestamp to insert a reference into the composer. The composer and transcript show a short turn ID, such as `#e1b4c29a` (seven ID characters plus `a` for answer or `u` for user). Stored references retain the full chat ID, turn ID and role. Select the reference to jump to the message in the same chat. Answers written before timestamp support have no recorded completion time.
@@ -100,7 +101,7 @@ Entra uses the normal Azure Identity credential chain, including configured serv
 
 No live Foundry endpoint or Entra tenant has been tested. Local protocol tests use synthetic credentials and the real Copilot executable; a separate mocked-credential test checks the Entra scope, callback and cleanup.
 
-## MCP, Memento and skills
+## MCP and skills
 
 The MCP file accepts `mcpServers` or `servers`. HTTP bearer credentials can reference a server environment variable:
 
