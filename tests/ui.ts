@@ -17,7 +17,7 @@ const sessions = [
 ];
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12"><script>window.svgRan=true</script><rect width="12" height="12"/></svg>';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
-const inline = '\n\n[Example](https://example.com/)\n\n![Inline PNG](data:image/png;base64,' + png.toString('base64') + ')\n\n' + '```svg\n' + svg + '\n```';
+const inline = '\n\n[Example](https://example.com/) and [same page](https://example.com/#details)\n\n> https://example.org/article\n\n![Inline PNG](data:image/png;base64,' + png.toString('base64') + ')\n\n' + '```svg\n' + svg + '\n```';
 const turns: any[] = [
   {id: 't1', kind: 'turn', prompt: 'List the files in the workspace.', status: 'done', answer: 'There are two files: `AGENTS.md` and `notes.txt`.\n\n| File | State |\n| --- | --- |\n| notes.txt | **OK** |\n\n<b>literal HTML</b>' + inline, created_at: now - 590, finished_at: now - 585, images:[{name:'diagram.svg', ordinal:0, mime:'image/svg+xml', digest:'svg'}, {name:'dot.png', ordinal:1, mime:'image/png', digest:'png'}]},
   {id: 't2', kind: 'compact', prompt: '', status: 'done', answer: JSON.stringify({success: true, messagesRemoved: 6, tokensRemoved: 4210}), created_at: now - 500},
@@ -26,7 +26,7 @@ const turns: any[] = [
 const events = [
   {seq: 1, turn_id: 't1', type: 'tool.execution_start', data: {toolCallId: 'a', toolName: 'bash', arguments: {command: 'ls -1', description:'Checking which files are present'}}},
   {seq: 2, turn_id: 't1', type: 'tool.execution_complete', data: {toolCallId: 'a', success: true, result: {content: '{"files":["AGENTS.md","notes.txt"],"ok":true}'}}},
-  {seq: 3, turn_id: 't3', type: 'assistant.reasoning_delta', data: {deltaContent: '**Prepare** the file with the edit tool.'}},
+  {seq: 3, turn_id: 't3', type: 'assistant.reasoning_delta', data: {deltaContent: '**Prepare** the file with the edit tool. [Reasoning source](https://reasoning.example/).'}},
   {seq: 4, turn_id: 't3', type: 'tool.execution_start', data: {toolCallId: 'b', toolName: 'create', arguments: {path: 'summary.md'}}},
 ];
 const pendingApproval = {id: 'p1', status: 'pending', request: JSON.stringify({kind: 'write', fileName: 'summary.md', intention: 'Create the summary file'})};
@@ -44,8 +44,13 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   const json = (value: unknown) => Response.json(value);
   if (path === '/api/config') return json({models, link_previews:linkPreviews, summary_model:'gpt-5.6-luna', skills: ['memento'], mcp_servers: ['memento'], working_directory: '/srv/workspace', auth_source: 'Copilot CLI login'});
   if (path === '/api/settings/link-previews') { linkPreviews = await request.json() as typeof linkPreviews; return json(linkPreviews); }
-  if (path === '/api/link-preview') return json({title:'Example preview', description:'Cached description', image:'/media/preview/abcdef'});
-  if (path === '/media/preview/abcdef') return new Response(png, {headers:{'Content-Type':'image/png'}});
+  if (path === '/api/link-preview') {
+    const source = url.searchParams.get('url');
+    if (source === 'https://example.com/') return json({title:'Example preview', description:'Cached description', image:'/media/preview/abcdef'});
+    if (source === 'https://example.org/article') return json({title:'Article preview', image:'/media/preview/123456'});
+    return json({title:'Unexpected preview'});
+  }
+  if (['/media/preview/abcdef','/media/preview/123456'].includes(path)) return new Response(png, {headers:{'Content-Type':'image/png'}});
   if (path === '/api/sessions' && request.method === 'GET') return json(sessions);
   if (path === '/api/sessions/s1/summary') return json({text:'Reviewed the release files.',model:'gpt-5.6-luna'});
   if (path === '/api/sessions/s1/title' && request.method === 'POST') { const value = await request.json() as {title:string,handle:string}; Object.assign(sessions[0],value); return json(sessions[0]); }
@@ -236,16 +241,28 @@ try {
   });
   await run('link previews: opt-in settings and cached thumbnail', {width:1280,height:860}, 'light', async page => {
     await page.goto(url + '#token=' + token);
-    await page.getByRole('link',{name:'Example',exact:true}).waitFor();
+    const newTab = '[target="_blank"][rel="noopener noreferrer"]';
+    await page.locator(`.answer a[href="https://example.com/"]${newTab}`).waitFor();
+    await page.locator(`.answer blockquote a[href="https://example.org/article"]${newTab}`).waitFor();
+    await page.locator('.message-ref:not([target])').first().waitFor();
     if (calls.includes('GET /api/link-preview')) throw new Error('Disabled previews requested metadata');
     await page.locator('#open-settings').click();
     await page.locator('#preview-enabled').check();
-    await page.locator('#preview-any').check();
     await page.keyboard.press('Escape');
-    await page.getByRole('link',{name:'Example preview'}).waitFor();
-    await page.waitForFunction(() => (document.querySelector<HTMLImageElement>('.link-preview img')?.naturalWidth || 0) > 0);
+    await page.locator('#message-t3 summary').filter({hasText:'Thinking through'}).click();
+    await page.locator(`.reasoning-content a[href="https://reasoning.example/"]${newTab}`).waitFor();
+    await page.locator(`.link-preview a[href="https://example.com/"]${newTab}`).getByText('Example preview').waitFor();
+    await page.locator(`.link-preview a[href="https://example.org/article"]${newTab}`).getByText('Article preview').waitFor();
+    await page.waitForFunction(() => {
+      const images = [...document.querySelectorAll<HTMLImageElement>('.answer .link-preview img')];
+      return images.length === 2 && images.every(img => img.naturalWidth > 0);
+    });
+    if (await page.locator('.answer > .link-preview:last-child').count() !== 1 ||
+        await page.locator('.link-preview').count() !== 2 || calls.filter(call => call === 'GET /api/link-preview').length !== 2) {
+      throw new Error('Expected only the two distinct timeline links to have appended previews');
+    }
     await page.locator('#open-settings').click(); await page.locator('#preview-enabled').uncheck();
-    await page.keyboard.press('Escape'); await page.locator('.link-preview').waitFor({state:'detached'});
+    await page.keyboard.press('Escape'); await page.waitForFunction(() => !document.querySelector('.link-preview'));
   });
   console.log(JSON.stringify({checks, evidence: root}, null, 2));
 } finally {

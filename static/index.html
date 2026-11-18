@@ -545,7 +545,22 @@ function expandRefs(text) {
     return matches.length === 1 ? space + '[[message:' + selected + ':' + matches[0] + ':' + (suffix === 'u' ? 'prompt' : 'answer') + ']]' : whole;
   });
 }
-const renderer = window.markdownit({html:false, breaks:true});
+const renderer = window.markdownit({html:false, breaks:true, linkify:true});
+function externalWebURL(href) {
+  try {
+    const url = new URL(href, location.href);
+    if (['http:', 'https:'].includes(url.protocol) && url.origin !== location.origin) return url;
+  } catch { /* Leave unparseable links alone. */ }
+  return null;
+}
+const newTab = {target:'_blank', rel:'noopener noreferrer'};
+renderer.renderer.rules.link_open = (tokens, index, options, env, self) => {
+  const token = tokens[index];
+  if (externalWebURL(token.attrGet('href'))) {
+    for (const [name, value] of Object.entries(newTab)) token.attrSet(name, value);
+  }
+  return self.renderToken(tokens, index, options);
+};
 // Keep images in image context. Do not fetch arbitrary URLs from chat text.
 const validateLink = renderer.validateLink;
 const rasterData = /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=]+$/i;
@@ -606,8 +621,14 @@ function addLinkPreviews(el) {
   const ctx = context;
   if (!ctx || !config?.link_previews?.enabled || !el.matches('.prompt,.answer')) return;
   const cache = ctx.previews ||= new Map();
-  const links = [...new Set([...el.querySelectorAll('a[href^="https://"]')].map(a => a.href))].slice(0, 3);
-  for (const url of links) {
+  const links = new Map();
+  for (const anchor of el.querySelectorAll('a[href]')) {
+    const url = externalWebURL(anchor.href);
+    if (url?.protocol !== 'https:') continue;
+    url.hash = '';
+    if (!links.has(url.href)) links.set(url.href, anchor.href);
+  }
+  for (const [url, destination] of [...links].slice(0, 3)) {
     if (!cache.has(url)) {
       if (cache.size >= 24) break;
       cache.set(url, json('/api/link-preview?url=' + encodeURIComponent(url), {signal:ctx.controller.signal}).catch(() => null));
@@ -616,10 +637,11 @@ function addLinkPreviews(el) {
     cache.get(url).then(data => {
       if (context !== ctx || !card.isConnected || cache !== ctx.previews) return;
       if (!data?.title && !data?.description && !data?.image) { card.remove(); return; }
-      const a = node('a', '', data.title || new URL(url).hostname); a.href = url;
+      const a = node('a', '', data.title || new URL(url).hostname);
+      Object.assign(a, newTab, {href:destination});
       card.append(a);
       if (/^\/media\/preview\/[a-f0-9-]+$/.test(data.image || '')) {
-        const img = node('img'); img.alt = ''; card.prepend(img); loadChatImage(img,data.image,ctx);
+        const img = node('img'); img.alt = ''; a.prepend(img); loadChatImage(img,data.image,ctx);
       }
       if (data.description) card.append(node('p','muted',data.description));
     });
