@@ -354,26 +354,34 @@ class Runtime:
                 and root != self.settings.data.resolve()
             ):
                 protected.remove(self.settings.data.resolve())
-            try:
-                name, mime, digest, content = await asyncio.to_thread(
-                    workspace_file, root, str(path), protected
-                )
-            except OSError:
-                raise ValueError(
-                    "Could not open a regular workspace file without following symlinks"
-                ) from None
-            if any(
-                secret and secret.encode() in content
-                for secret in self.secret_values | self.providers.secrets
-            ):
-                raise ValueError("The file contains a server credential and cannot be shared")
-            asset = await self.store.share_file(own_sid, tid, name.name, mime, digest, content)
-            return {
-                "id": asset,
-                "name": name.name,
-                "size": len(content),
-                "status": "attached to the timeline",
-            }
+            secrets = tuple(
+                secret.encode() for secret in self.secret_values | self.providers.secrets if secret
+            )
+
+            def copy():
+                try:
+                    with workspace_file(root, str(path), protected, secrets) as (
+                        name,
+                        mime,
+                        digest,
+                        size,
+                        source,
+                    ):
+                        asset = self.store.share_file_stream(
+                            own_sid, tid, name, mime, digest, size, source
+                        )
+                        return {
+                            "id": asset,
+                            "name": name,
+                            "size": size,
+                            "status": "attached to the timeline",
+                        }
+                except OSError:
+                    raise ValueError(
+                        "Could not read a regular workspace file without following symlinks"
+                    ) from None
+
+            return await asyncio.to_thread(copy)
 
         async def plan(args):
             change = PlanInput.model_validate(self.redact(args))
@@ -593,7 +601,7 @@ class Runtime:
                 {
                     "path": {
                         "type": "string",
-                        "description": "Path to a regular file in the configured workspace (max 50 MiB).",
+                        "description": "Path to a regular file in the configured workspace (max 256 MiB).",
                     }
                 },
                 ["path"],

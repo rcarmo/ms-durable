@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from agent.app import create_app
 from agent.config import Settings
-from agent.media import MAX_BODY, MAX_SHARED, ImageInput
+from agent.media import MAX_BODY, MAX_SHARED, SHARED_CHUNK, ImageInput
 from agent.runtime import Runtime
 
 SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>'
@@ -163,14 +163,37 @@ def test_shared_file_route_is_authenticated_and_session_scoped(tmp_path):
             sid = (await store.create_session("Files", "mock"))["id"]
             tid = (await store.submit(sid, "share", "share"))["id"]
             await store.execute("UPDATE turns SET status='running' WHERE id=?", (tid,))
-            media = await store.share_file(sid, tid, "test.gif", "image/gif", "digest", b"GIF89a")
-            await store.execute(
-                "INSERT INTO shared_files VALUES(?,?,?,'application/octet-stream','video-digest',zeroblob(?))",
-                ("video-fixture", tid, "demo.mp4", MAX_SHARED),
-            )
-            return sid, media
+            import hashlib
+            import io
 
-        sid, asset = client.portal.call(seed)
+            data = b"GIF89a"
+            media = await asyncio.to_thread(
+                store.share_file_stream,
+                sid,
+                tid,
+                "test.gif",
+                "image/gif",
+                hashlib.sha256(data).hexdigest(),
+                len(data),
+                io.BytesIO(data),
+            )
+            video_turn = (await store.submit(sid, "video", "video"))["id"]
+            await store.execute("UPDATE turns SET status='running' WHERE id=?", (video_turn,))
+            workspace = tmp_path / "work"
+            workspace.mkdir()
+            with (workspace / "demo.mp4").open("wb") as file:
+                file.truncate(MAX_SHARED)
+                file.seek(MAX_SHARED - 4)
+                file.write(b"tail")
+            runtime = Runtime(
+                Settings(data=tmp_path, working_directory=workspace, access_token="fixture"), store
+            )
+            runtime.active[sid] = video_turn
+            tool = next(t for t in runtime.tools(sid) if t.name == "attach_file")
+            result = await tool.handler(SimpleNamespace(arguments={"path": "demo.mp4"}))
+            return sid, media, json.loads(result.text_result_for_llm)["id"]
+
+        sid, asset, video_id = client.portal.call(seed)
         url = f"/media/shared/{sid}/{asset}/file"
         assert client.get(url, headers={"Authorization": ""}).status_code == 401
         assert client.get(f"/media/shared/other/{asset}/file").status_code == 404
@@ -204,20 +227,23 @@ def test_shared_file_route_is_authenticated_and_session_scoped(tmp_path):
             ).status_code
             == 401
         )
-        assert client.get(f"/api/sessions/{sid}").json()["turns"][0]["files"] == [
-            {"id": asset, "name": "test.gif", "mime": "image/gif", "size": 6},
+        snapshot = client.get(f"/api/sessions/{sid}").json()["turns"]
+        assert snapshot[0]["files"] == [
+            {"id": asset, "name": "test.gif", "mime": "image/gif", "size": 6}
+        ]
+        assert snapshot[1]["files"] == [
             {
-                "id": "video-fixture",
+                "id": video_id,
                 "name": "demo.mp4",
                 "mime": "application/octet-stream",
                 "size": MAX_SHARED,
-            },
+            }
         ]
-        video = f"/media/shared/{sid}/video-fixture/file"
+        video = f"/media/shared/{sid}/{video_id}/file"
         assert client.head(video).headers["content-length"] == str(MAX_SHARED)
         n = 300_000  # Cross a streaming chunk boundary near the end of the video.
         tail = client.get(video, headers={"Range": f"bytes={MAX_SHARED - n}-"})
-        assert tail.status_code == 206 and tail.content == bytes(n)
+        assert tail.status_code == 206 and tail.content == bytes(n - 4) + b"tail"
         assert (
             tail.headers["content-range"] == f"bytes {MAX_SHARED - n}-{MAX_SHARED - 1}/{MAX_SHARED}"
         )
@@ -239,7 +265,7 @@ async def test_agent_file_sharing_without_approval_snapshots_bytes(store, tmp_pa
     (workspace / "wide.gif").write_bytes(gif[:6] + (5000).to_bytes(2, "little") + gif[8:])
     (workspace / "linked.gif").symlink_to(picture)
     (workspace / "report.txt").write_text("Report")
-    (workspace / "sensitive.txt").write_text("secret-fixture")
+    (workspace / "sensitive.txt").write_bytes(b"x" * (SHARED_CHUNK - 4) + b"secret-fixture")
     tool = next(t for t in runtime.tools(sid) if t.name == "attach_file")
 
     async def attach(path):

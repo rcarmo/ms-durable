@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
+import sqlite3
 import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
+
+from .media import MAX_SHARED, SHARED_CHUNK
 
 # External-content FTS stores postings, not a second copy of the timeline.
 # Index final answers once, rather than indexing every streaming fragment.
@@ -443,38 +447,60 @@ CREATE TABLE IF NOT EXISTS sdk_files(
 
         return {"turn_matches": bounded(turns), "event_matches": bounded(events)}
 
-    async def share_file(self, sid, tid, name, mime, digest, content):
-        async with self.transaction() as db:
-            if not await (
-                await db.execute(
+    def share_file_stream(self, sid, tid, name, mime, digest, size, source):
+        """Run on a worker thread, with one connection for the complete BLOB write."""
+        if not 0 <= size <= MAX_SHARED:
+            raise ValueError("Shared files must be at most 256 MiB")
+        db = sqlite3.connect(self.path)
+        try:
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA synchronous=FULL")
+            with db:
+                db.execute("BEGIN IMMEDIATE")
+                if not db.execute(
                     "SELECT 1 FROM turns WHERE id=? AND session_id=? AND status='running'",
                     (tid, sid),
+                ).fetchone():
+                    raise ValueError("File sharing requires an active turn")
+                row = db.execute(
+                    "SELECT id FROM shared_files WHERE turn_id=? AND name=? AND digest=?",
+                    (tid, name, digest),
+                ).fetchone()
+                if row:
+                    return row[0]
+                count, total = db.execute(
+                    "SELECT count(*), coalesce(sum(length(content)),0) FROM shared_files WHERE turn_id=?",
+                    (tid,),
+                ).fetchone()
+                if count >= 5 or total + size > MAX_SHARED:
+                    raise ValueError("Share at most five files and 256 MiB total per turn")
+                asset = uid()
+                rowid = db.execute(
+                    "INSERT INTO shared_files VALUES(?,?,?,?,?,zeroblob(?))",
+                    (asset, tid, name, mime, digest, size),
+                ).lastrowid
+                # Rehash the exact bytes written. A source change after the secret
+                # scan must not publish different bytes under the checked digest.
+                check = hashlib.sha256()
+                if size:
+                    with db.blobopen("shared_files", "content", rowid) as blob:
+                        remaining = size
+                        while remaining:
+                            chunk = source.read(min(SHARED_CHUNK, remaining))
+                            if not chunk:
+                                raise ValueError("The file changed while being shared")
+                            remaining -= len(chunk)
+                            check.update(chunk)
+                            blob.write(chunk)
+                if source.read(1) or check.hexdigest() != digest:
+                    raise ValueError("The file changed while being shared")
+                db.execute(
+                    "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
+                    (sid, tid, "app.file_shared", "{}"),
                 )
-            ).fetchone():
-                raise ValueError("File sharing requires an active turn")
-            args = (tid, name, digest)
-            row = await (
-                await db.execute(
-                    "SELECT id FROM shared_files WHERE turn_id=? AND name=? AND digest=?", args
-                )
-            ).fetchone()
-            if row:
-                return row["id"]
-            count = await (
-                await db.execute("SELECT count(*) FROM shared_files WHERE turn_id=?", (tid,))
-            ).fetchone()
-            if count[0] >= 5:
-                raise ValueError("Share at most five files per turn")
-            asset = uid()
-            await db.execute(
-                "INSERT INTO shared_files VALUES(?,?,?,?,?,?)",
-                (asset, tid, name, mime, digest, content),
-            )
-            await db.execute(
-                "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
-                (sid, tid, "app.file_shared", "{}"),
-            )
-            return asset
+                return asset
+        finally:
+            db.close()
 
     async def snapshot(self, sid):
         session = await self.session(sid)

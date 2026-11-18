@@ -6,6 +6,7 @@ import hashlib
 import io
 import os
 import stat
+from contextlib import contextmanager
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -23,7 +24,7 @@ RASTER = {
 }
 
 
-MAX_SHARED = 50 * 1024 * 1024
+MAX_SHARED = 256 * 1024 * 1024
 SHARED_CHUNK = 256 * 1024
 
 
@@ -45,7 +46,8 @@ def byte_range(value, size):
     return start, end
 
 
-def workspace_file(root, name, protected):
+@contextmanager
+def workspace_file(root, name, protected, secrets):
     path = Path(name)
     if path.is_absolute():
         path = path.relative_to(root)
@@ -65,13 +67,32 @@ def workspace_file(root, name, protected):
             fd = child
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_SHARED:
-            raise ValueError("Share a regular file of at most 50 MiB (no hard links)")
+            raise ValueError("Share a regular file of at most 256 MiB (no hard links)")
         with os.fdopen(os.dup(fd), "rb") as file:
-            content = file.read(MAX_SHARED + 1)
-        if len(content) > MAX_SHARED:
-            raise ValueError("Shared files must be at most 50 MiB")
+            digest = hashlib.sha256()
+            overlap = max(map(len, secrets), default=1) - 1
+            tail = b""
+            size = 0
+            while chunk := file.read(SHARED_CHUNK):
+                size += len(chunk)
+                if size > info.st_size:
+                    raise ValueError("The file changed while being shared")
+                window = tail + chunk
+                if any(secret in window for secret in secrets):
+                    raise ValueError("The file contains a server credential and cannot be shared")
+                tail = window[-overlap:] if overlap else b""
+                digest.update(chunk)
+            if size != info.st_size:
+                raise ValueError("The file changed while being shared")
+            file.seek(0)
+            mime = inline_mime(file.read(size)) if size <= MAX_IMAGE else "application/octet-stream"
+            file.seek(0)
+            yield path.name, mime, digest.hexdigest(), size, file
     finally:
         os.close(fd)
+
+
+def inline_mime(content):
     mime = "application/octet-stream"
     if len(content) <= MAX_IMAGE:
         raster = next((mime for mime, matches in RASTER.items() if matches(content)), None)
@@ -88,7 +109,7 @@ def workspace_file(root, name, protected):
                         mime = raster
             except (OSError, ValueError, Image.DecompressionBombError):
                 pass  # Keep the original downloadable; never decode an invalid preview.
-    return path, mime, hashlib.sha256(content).hexdigest(), content
+    return mime
 
 
 class ImageInput(BaseModel):
