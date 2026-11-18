@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Chat</title>
+<style>
+:root{--bg:#1f1f1f;--panel:#292929;--raised:#333;--hover:#383838;--selected:#414141;--border:#525252;--text:#fff;--muted:#c2c2c2;--accent:#75b6e7;--accent-ink:#102331;--danger:#ff99a4;--ok:#9ad29a;--warn:#f2c276;font:14px/20px "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;color:var(--text);background:var(--bg);color-scheme:dark}
+@media(prefers-color-scheme:light){:root{--bg:#fff;--panel:#f5f5f5;--raised:#fff;--hover:#ebebeb;--selected:#e0e0e0;--border:#d1d1d1;--text:#242424;--muted:#616161;--accent:#0f6cbd;--accent-ink:#fff;--danger:#b10e1c;--ok:#107c10;--warn:#835b00;color-scheme:light}}
+*{box-sizing:border-box}body{margin:0}h1,h2,h3,p{margin:0}h1{font-size:16px;line-height:24px;font-weight:600}h2{font-size:16px;line-height:24px;font-weight:600}h3{font-size:14px;font-weight:600;margin:16px 0 4px}
+button,input,select,textarea{font:inherit;color:inherit}::placeholder{color:var(--muted);opacity:1}
+button{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;background:transparent;border:1px solid transparent;border-radius:4px;padding:.4rem .7rem;cursor:pointer}
+button:hover:not(:disabled){background:var(--hover)}button:disabled{opacity:.4;cursor:default}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.icon{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.iconbtn{padding:.4rem;color:var(--muted)}.iconbtn:hover:not(:disabled){color:var(--text)}
+.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}.primary:hover:not(:disabled){background:var(--accent);filter:brightness(1.08)}
+.quiet{border-color:var(--border)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+[hidden]{display:none!important}
+.muted{color:var(--muted)}code,pre{font:.84rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+.shell{display:grid;grid-template-columns:260px minmax(0,1fr);height:100dvh}
+aside{background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+aside>header{display:flex;align-items:center;justify-content:space-between;padding:.8rem .8rem .5rem 1rem}
+#sessions{flex:1;overflow:auto;padding:.2rem .5rem;min-height:0}
+#sessions button{display:block;width:100%;text-align:left;padding:.5rem .6rem;margin-bottom:2px}
+#sessions button span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sessions button small{display:block;color:var(--muted);font-size:.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sessions button[aria-current=true]{background:var(--selected)}
+#sessions button[aria-current=true] span{font-weight:600}
+#sessions .empty{color:var(--muted);font-size:.85rem;padding:.5rem .6rem}
+aside>footer{border-top:1px solid var(--border);padding:.5rem;display:flex;align-items:center;gap:.4rem}
+#connection{display:flex;align-items:center;gap:.45rem;font-size:.78rem;color:var(--muted);flex:1;padding-left:.4rem;min-width:0}
+#connection::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}
+#connection[data-state=live]::before{background:var(--ok)}#connection[data-state=wait]::before{background:var(--warn)}#connection[data-state=down]::before{background:var(--danger)}
+main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+.topbar{display:flex;align-items:center;gap:.5rem;padding:.6rem 1rem;border-bottom:1px solid var(--border);min-height:52px}
+#title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#context-button{font-size:12px;color:var(--muted)}
+#menu{display:none}
+#notice{display:flex;gap:8px;align-items:flex-start;margin:8px 16px 0;padding:8px 12px;background:var(--panel);font-size:14px}
+#notice p{flex:1;overflow-wrap:anywhere;padding-top:.15rem}
+#transcript{flex:1;overflow:auto;padding:1.5rem 1rem 1rem;overflow-anchor:none}
+.content{max-width:780px;margin:auto}
+#empty{max-width:420px;margin:18vh auto 0;text-align:center;color:var(--muted)}#empty h2{color:var(--text);font-size:1.1rem;margin-bottom:.3rem}
+.turn{margin-bottom:1.8rem}
+.prompt{white-space:pre-wrap;overflow-wrap:anywhere}
+.speaker{display:block;color:var(--muted);font-size:12px;font-weight:600;margin-bottom:4px}.compact .speaker{display:none}
+.answer{overflow-wrap:anywhere;margin-top:.8rem}
+.answer>*+*{margin-top:.7rem}.answer p{white-space:pre-wrap}.answer h4{font-size:1rem;margin:0}.answer ul,.answer ol{margin-bottom:0;padding-left:1.3rem}.answer a{color:var(--accent)}
+.answer :not(pre)>code{background:var(--panel);padding:1px 3px}
+.answer pre{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:.6rem .8rem;overflow:auto;white-space:pre}
+.answer:empty{display:none}
+.working{color:var(--muted)}
+.state{display:inline-flex;align-items:center;gap:.35rem;font-size:.8rem;color:var(--muted);margin-top:.5rem}
+.state.bad{color:var(--danger)}
+.error{color:var(--danger);white-space:pre-wrap;overflow-wrap:anywhere;font-size:.9rem;margin-top:.5rem}.error:empty{display:none}
+.activity{margin:8px 0;color:var(--muted)}
+.activity:empty{display:none}
+.activity details{font-size:.86rem}
+.activity summary{display:flex;align-items:center;gap:.45rem;cursor:pointer;list-style:none;color:var(--muted);padding:.15rem 0;min-width:0}
+.activity summary::-webkit-details-marker{display:none}
+.activity summary:hover{color:var(--text)}
+.activity summary::before{content:"";width:6px;height:6px;border:solid currentColor;border-width:1px 1px 0 0;transform:rotate(45deg);margin:0 4px 0 1px;flex:none}.activity details[open]>summary::before{transform:rotate(135deg)}
+.activity summary b{font-weight:500;color:var(--text);flex:none}
+.activity summary code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.activity pre{background:var(--panel);padding:8px 12px;margin:4px 0;max-height:40vh;overflow:auto}
+.activity .ok{color:var(--ok)}.activity .bad{color:var(--danger)}.activity .wait{color:var(--warn)}
+.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spin{animation:none}}
+.compact-note{color:var(--muted);font-size:12px}
+
+#jump{position:absolute;right:1.5rem;top:-3.2rem;z-index:2;border:1px solid var(--border);background:var(--raised);border-radius:50%;padding:.45rem;box-shadow:0 4px 14px #0003}
+footer.composer{padding:0 1rem 1rem;position:relative}
+#approvals{max-width:780px;margin:0 auto;max-height:45vh;overflow:auto}
+.approval{background:var(--panel);padding:12px 16px;margin-bottom:8px}
+.approval header{display:flex;align-items:center;gap:.5rem}
+.approval header strong{flex:1}
+.approval code{display:block;margin:4px 0;overflow-wrap:anywhere;white-space:pre-wrap}
+.approval p{font-size:.85rem;color:var(--muted)}
+.approval details{font-size:.8rem;color:var(--muted);margin-top:.3rem}.approval details pre{margin-top:.3rem}
+.approval .actions{display:flex;gap:.4rem;justify-content:flex-end;margin-top:.5rem}
+#composer{max-width:780px;margin:auto;border:1px solid var(--border);border-radius:4px;background:var(--bg);padding:8px}
+#composer:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+#prompt{display:block;width:100%;border:0;background:transparent;resize:none;padding:.35rem .45rem;min-height:2.6rem;max-height:35vh;outline:none}
+.tools{display:flex;align-items:center;gap:.3rem}
+#model{background:transparent;border:1px solid transparent;border-radius:4px;padding:.3rem .4rem;color:var(--muted);font-size:.82rem;max-width:45%;cursor:pointer}
+#model:hover{border-color:var(--border);color:var(--text)}
+.tools .grow{flex:1}
+#send{border-radius:4px;padding:.4rem}
+#stop{color:var(--text);border-color:var(--border);border-radius:4px;padding:.4rem}
+dialog{border:1px solid var(--border);border-radius:8px;background:var(--raised);color:var(--text);padding:0;width:min(440px,calc(100vw - 2rem));box-shadow:0 18px 50px #0006}
+dialog::backdrop{background:#0007}
+dialog header{display:flex;align-items:center;justify-content:space-between;padding:.8rem .8rem .2rem 1.1rem}
+dialog .body{padding:.2rem 1.1rem 1.1rem;max-height:70vh;overflow:auto}
+dialog dl{display:grid;grid-template-columns:auto 1fr;gap:.25rem 1rem;margin:.4rem 0;font-size:.88rem}dialog dt{color:var(--muted)}dialog dd{margin:0;overflow-wrap:anywhere;text-align:right}
+dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:flex;align-items:center;gap:.5rem;padding:.3rem 0;border-top:1px solid var(--border)}dialog li:first-child{border-top:0}dialog li .icon{width:15px;height:15px;color:var(--muted)}
+.meter{height:8px;border-radius:4px;background:var(--panel);border:1px solid var(--border);overflow:hidden;display:flex;margin:.6rem 0 .3rem;position:relative}
+.meter i{display:block;height:100%}.meter i:nth-child(1){background:var(--muted)}.meter i:nth-child(2){background:var(--accent)}.meter i:nth-child(3){background:var(--ok)}
+.meter b{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--warn)}
+.legend{display:flex;flex-wrap:wrap;gap:.2rem .9rem;font-size:.78rem;color:var(--muted)}
+.legend .threshold{margin-left:auto}.legend .threshold::before{width:2px;height:10px;border-radius:0;vertical-align:-1px}
+.legend span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:.3rem;background:var(--c)}
+.dialog-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}
+#auth{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:20;padding:1rem}
+#auth form{width:min(360px,100%);display:flex;flex-direction:column;gap:.7rem}
+#auth input{padding:.6rem .7rem;border:1px solid var(--border);border-radius:4px;background:var(--panel)}
+#auth p{font-size:.85rem}
+#scrim{display:none}
+@media(forced-colors:active){#sessions button[aria-current=true]{border:1px solid Highlight}:focus-visible,#composer:focus-within{outline:2px solid Highlight}}
+@media(pointer:coarse){button,#model{min-height:44px}.iconbtn,#send,#stop,#context-button{min-width:44px}#sessions button{padding:.7rem .6rem}#model{min-height:44px}}
+@media(prefers-reduced-motion:reduce){aside{transition:none!important}}
+@media(max-width:720px){#jump{right:1rem}.shell{grid-template-columns:1fr}aside{position:fixed;inset:0 auto 0 0;width:min(320px,82vw);z-index:10;transform:translateX(-100%);visibility:hidden;transition:transform .18s ease,visibility 0s .18s}aside.open{transform:none;visibility:visible;transition:transform .18s ease;box-shadow:12px 0 40px #0005}#context-label:empty{display:none}#scrim.open{display:block;position:fixed;inset:0;background:#0006;z-index:9}#menu{display:inline-flex}#transcript{padding:1rem .8rem}footer.composer{padding:0 .6rem .6rem}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-new" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+<symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+<symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+<symbol id="i-x-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></symbol>
+<symbol id="i-loader" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
+<symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 17 6-5-6-5M12 19h8"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6"/></symbol>
+<symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0Z"/><path d="M12 18v4"/></symbol>
+<symbol id="i-tool" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4Z"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+<symbol id="i-thought" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3Z"/></symbol>
+<symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4 15a8 8 0 1 1 16 0"/><path d="m12 15 4-5"/></symbol>
+<symbol id="i-compress" viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6Z"/></symbol>
+<symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20Z"/><path d="M12 10v4M12 17h.01"/></symbol>
+</svg>
+<div id="auth" hidden>
+  <form>
+    <h1>Chat</h1>
+    <p class="muted">Enter the server access token. It is kept only for this browser tab.</p>
+    <label class="sr" for="token">Access token</label>
+    <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="Access token" required>
+    <button type="submit" class="primary">Connect</button>
+  </form>
+</div>
+<div class="shell">
+<aside id="sidebar" aria-label="Conversations">
+  <header><h1>Chat</h1><button id="new" type="button" class="iconbtn" aria-label="New conversation" title="New conversation"><svg class="icon"><use href="#i-new"/></svg></button></header>
+  <nav id="sessions" aria-label="Conversations"></nav>
+  <footer><span id="connection" role="status" data-state="down">Disconnected</span><button id="open-settings" type="button" class="iconbtn" aria-label="Settings" title="Settings"><svg class="icon"><use href="#i-settings"/></svg></button></footer>
+</aside>
+<div id="scrim"></div>
+<main>
+  <header class="topbar">
+    <button id="menu" type="button" class="iconbtn" aria-label="Conversations" aria-expanded="false" aria-controls="sidebar"><svg class="icon"><use href="#i-menu"/></svg></button>
+    <h2 id="title">New conversation</h2>
+    <button id="context-button" type="button" aria-label="Context usage" title="Context usage and compaction" hidden><svg class="icon"><use href="#i-gauge"/></svg><span id="context-label"></span></button>
+  </header>
+  <div id="notice" role="alert" hidden><svg class="icon" style="color:var(--warn)"><use href="#i-alert"/></svg><p></p><button type="button" class="iconbtn" aria-label="Dismiss" id="notice-close"><svg class="icon"><use href="#i-close"/></svg></button></div>
+  <section id="transcript" aria-label="Conversation" aria-live="polite">
+    <div class="content" id="turns"></div>
+    <div id="empty"><h2>Start a conversation</h2><p>Type a message below.</p></div>
+  </section>
+  <footer class="composer">
+  <button id="jump" type="button" aria-label="Jump to latest" title="Jump to latest" hidden><svg class="icon"><use href="#i-down"/></svg></button>
+    <section id="approvals" aria-label="Permission requests"></section>
+    <form id="composer">
+      <label class="sr" for="prompt">Message</label>
+      <textarea id="prompt" rows="1" placeholder="Message"></textarea>
+      <div class="tools">
+        <label class="sr" for="model">Model (applies from the next turn)</label>
+        <select id="model" title="Model · applies from the next turn"><option value="">Loading models…</option></select>
+        <span class="grow"></span>
+        <button id="stop" type="button" aria-label="Stop" title="Stop the current turn and clear the queue" hidden><svg class="icon"><use href="#i-stop"/></svg></button>
+        <button id="send" type="submit" class="primary" aria-label="Send" title="Send" disabled><svg class="icon"><use href="#i-send"/></svg></button>
+      </div>
+    </form>
+  </footer>
+</main>
+</div>
+<dialog id="settings-dialog" aria-labelledby="settings-title">
+  <header><h2 id="settings-title">Settings</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
+  <div class="body">
+    <div id="config" class="muted">Not connected.</div>
+    <div class="dialog-actions"><button id="change-token" type="button" class="quiet"><svg class="icon"><use href="#i-key"/></svg>Change access token</button></div>
+  </div>
+</dialog>
+<dialog id="context-dialog" aria-labelledby="context-title">
+  <header><h2 id="context-title">Context</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
+  <div class="body">
+    <div id="context-summary" class="muted">Loading…</div>
+    <details style="margin-top:.8rem"><summary class="muted" style="font-size:.82rem;cursor:pointer">Raw native metadata</summary><pre id="context-info" style="font-size:.72rem;margin-top:.4rem">Not loaded.</pre></details>
+    <p class="muted" style="font-size:.82rem;margin-top:1rem">Compaction summarises older turns using the native runtime. It is queued after any current work.</p>
+    <div class="dialog-actions"><button id="compact" type="button" class="quiet"><svg class="icon"><use href="#i-compress"/></svg>Compact now</button></div>
+  </div>
+</dialog>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const storageKey = 'ms-durable.access-token';
+let token = '';
+try { token = sessionStorage.getItem(storageKey) || ''; } catch {}
+const fragment = new URLSearchParams(location.hash.slice(1));
+if (fragment.has('token')) {
+  token = fragment.get('token') || '';
+  try { sessionStorage.setItem(storageKey, token); } catch {}
+  history.replaceState(null, '', location.pathname + location.search);
+}
+let config = null, selected = null, context = null, generation = 0, bootController = null;
+let sending = false, pending = null, sessions = [];
+const drafts = new Map(), turnNodes = new Map(), sessionNodes = new Map();
+const DONE = new Set(['completed','complete','failed','error','cancelled','canceled','stopped','interrupted','succeeded','done']);
+const STATES = {queued:'Queued', running:'Working', cancelled:'Stopped', canceled:'Stopped', stopped:'Stopped', interrupted:'Interrupted by a restart · not resent', error:'Failed', failed:'Failed'};
+function node(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+function icon(name, extra = '') {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'icon ' + extra); svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', '#i-' + name);
+  svg.append(use); return svg;
+}
+function setIcon(svg, name, extra = '') { svg.setAttribute('class', 'icon ' + extra); svg.firstChild.setAttribute('href', '#i-' + name); }
+function text(el, value) { const s = value == null ? '' : String(value); if (el.textContent !== s) el.textContent = s; }
+function requestId() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  return [hex.slice(0,8), hex.slice(8,12), hex.slice(12,16), hex.slice(16,20), hex.slice(20)].join('-');
+}
+function format(value) { return typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? ''; }
+function parse(value) { if (typeof value !== 'string') return value; try { return JSON.parse(value); } catch { return value; } }
+function notice(message = '') { text($('notice').querySelector('p'), message); $('notice').hidden = !message; }
+function status(message, state) { text($('connection'), message); $('connection').dataset.state = state; }
+function nearBottom() { const el = $('transcript'); return el.scrollHeight - el.scrollTop - el.clientHeight < 120; }
+function bottom() { $('transcript').scrollTop = $('transcript').scrollHeight; $('jump').hidden = true; }
+function when(seconds) {
+  if (!seconds) return '';
+  const d = new Date(seconds * 1000), now = new Date();
+  return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : d.toLocaleDateString([], {day:'numeric', month:'short'});
+}
+function modelName(id) { return config?.models.find(m => m.id === id)?.name || id || ''; }
+function controls() {
+  const active = Boolean(context?.active);
+  $('send').disabled = !config || !token || !$('prompt').value.trim() || sending || Boolean(context && !context.ready);
+  const label = active ? 'Queue message' : 'Send';
+  $('send').setAttribute('aria-label', label); $('send').title = label;
+  $('stop').hidden = !selected || !active; $('stop').disabled = sending;
+  $('new').disabled = sending;
+  $('context-button').hidden = !selected;
+}
+async function api(path, {method = 'GET', body, signal} = {}) {
+  const headers = {Authorization: 'Bearer ' + token};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const response = await fetch(path, {method, headers, credentials: 'same-origin', signal, body: body === undefined ? undefined : JSON.stringify(body)});
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) { $('auth').hidden = false; $('token').focus(); }
+    let detail = '';
+    try { detail = (await response.json()).detail || ''; } catch {}
+    throw new Error(response.status === 401 || response.status === 403 ? 'The access token was rejected.' : (detail ? detail + '.' : 'Request failed (' + response.status + ').'));
+  }
+  return response;
+}
+async function json(path, options) { const r = await api(path, options); return r.status === 204 ? null : r.json(); }
+function pause(ms, signal) {
+  return new Promise(resolve => {
+    if (signal.aborted) return resolve();
+    const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
+    const timer = setTimeout(done, ms); signal.addEventListener('abort', done, {once:true});
+  });
+}
+function describeRequest(r) {
+  const kind = r.kind || 'tool';
+  if (kind === 'shell') return ['terminal', 'Run a command', r.fullCommandText || '', r.intention];
+  if (kind === 'write') return ['file', 'Write a file', r.fileName || r.path || (r.possiblePaths || []).join(', '), r.intention];
+  if (kind === 'url') return ['globe', 'Open a URL', r.url || '', r.intention];
+  if (kind === 'mcp') return ['plug', 'Use an MCP tool', [r.serverName, r.toolTitle || r.toolName].filter(Boolean).join(' · '), r.intention];
+  if (kind === 'custom-tool') return ['tool', 'Use an app tool', r.toolName || '', r.toolDescription];
+  return ['shield', 'Allow ' + kind, r.toolName || '', r.intention];
+}
+function renderApprovals(items) {
+  const box = $('approvals'), ids = items.map(item => item.id).join(',');
+  if (box.dataset.ids === ids) return;
+  box.dataset.ids = ids; box.replaceChildren();
+  for (const item of items) {
+    const request = parse(item.request) || {}, [, title, subject, why] = describeRequest(request);
+    const card = node('div', 'approval'), head = node('header');
+    head.append(icon('shield'), node('strong', '', 'Permission requested: ' + title));
+    card.append(head);
+    if (subject) card.append(node('code', '', subject));
+    if (why) card.append(node('p', '', why));
+    const raw = node('details'); raw.append(node('summary', '', 'Request details'), node('pre', '', format(request))); card.append(raw);
+    const actions = node('div', 'actions');
+    for (const [label, allow] of [['Deny', false], ['Approve once', true]]) {
+      const button = node('button', 'quiet'); button.type = 'button';
+      text(button, label);
+      button.onclick = async () => {
+        actions.querySelectorAll('button').forEach(b => { b.disabled = true; });
+        try { await json('/api/approvals/' + encodeURIComponent(item.id), {method:'POST', body:{allow}}); card.remove(); box.dataset.ids = ''; if (context) { context.approvalCount = Math.max(0, (context.approvalCount || 1) - 1); render(context); } scheduleSnapshot(context); }
+        catch(error) { notice(error.message); actions.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
+      };
+      actions.append(button);
+    }
+    card.append(actions);
+    box.append(card);
+  }
+}
+$('model').addEventListener('change', async () => {
+  if (!selected) return;
+  try { await json('/api/sessions/' + encodeURIComponent(selected) + '/model', {method:'POST', body:{model:$('model').value}}); notice(); }
+  catch(error) { notice(error.message); }
+});
+function renderConfig() {
+  const previous = $('model').value;
+  $('model').replaceChildren(...config.models.map(m => { const o = node('option', '', m.name || m.id); o.value = m.id; return o; }));
+  if (config.models.some(m => m.id === previous)) $('model').value = previous;
+  const box = $('config'); box.replaceChildren(); box.className = '';
+  const dl = node('dl');
+  for (const [label, value] of [['Workspace', config.working_directory], ['Credentials', config.auth_source], ['Available models', String(config.models.length)]]) dl.append(node('dt', '', label), node('dd', '', value || 'Not provided'));
+  box.append(dl);
+  if (config.error) box.append(node('p', 'error', config.error));
+  for (const [label, values, iconName] of [['Skills', config.skills, 'thought'], ['MCP servers', config.mcp_servers, 'plug']]) {
+    box.append(node('h3', '', label));
+    const list = node('ul');
+    for (const value of values || []) { const li = node('li'); li.append(icon(iconName), node('span', '', value)); list.append(li); }
+    if (!list.children.length) list.append(node('li', 'muted', 'None configured'));
+    box.append(list);
+  }
+}
+function renderSessions() {
+  const keep = new Set(), nav = $('sessions');
+  sessions.forEach((s, index) => {
+    const id = String(s.id); keep.add(id);
+    let b = sessionNodes.get(id);
+    if (!b) {
+      b = node('button'); b.type = 'button'; b.append(node('span'), node('small'));
+      b.onclick = () => { if (!sending) selectSession(id); };
+      sessionNodes.set(id, b);
+    }
+    text(b.firstChild, s.title || 'Untitled conversation'); text(b.lastChild, [modelName(s.model), when(s.created_at)].filter(Boolean).join(' · '));
+    b.setAttribute('aria-current', String(id === selected)); b.disabled = sending;
+    const current = nav.children[index]; if (current !== b) nav.insertBefore(b, current || null);
+  });
+  for (const [id, el] of sessionNodes) if (!keep.has(id)) { el.remove(); sessionNodes.delete(id); }
+  let empty = nav.querySelector('.empty');
+  if (!sessions.length && !empty) nav.append(node('p', 'empty', 'No conversations yet.'));
+  if (sessions.length && empty) empty.remove();
+}
+function newTurn(id) {
+  const root = node('article', 'turn'); root.dataset.turnId = id;
+  const prompt = node('div', 'prompt'), activity = node('div', 'activity'), answer = node('div', 'answer'), error = node('div', 'error');
+  const state = node('div', 'state'), stateIcon = icon('loader'), stateText = node('span'); state.append(stateIcon, stateText);
+  const note = node('div', 'compact-note');
+  root.append(note, node('span', 'speaker', 'You'), prompt, activity, answer, error, state);
+  return {root, prompt, answer, error, activity, state, stateIcon, stateText, note, entries:new Map()};
+}
+const BLOCK = /^\s*(```|#{1,4}\s|[-*]\s|\d+\.\s)/;
+function markdown(el, src) {
+  if (el.md === src) return; el.md = src; el.replaceChildren();
+  const lines = src.split('\n'); let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      const body = []; i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) body.push(lines[i++]);
+      i++; const pre = node('pre'); pre.append(node('code', '', body.join('\n'))); el.append(pre); continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    const heading = line.match(/^#{1,4}\s+(.*)/);
+    if (heading) { el.append(inline(node('h4'), heading[1])); i++; continue; }
+    const item = /^\s*([-*]|\d+\.)\s+/;
+    if (item.test(line)) {
+      const list = node(/^\s*\d/.test(line) ? 'ol' : 'ul');
+      while (i < lines.length && item.test(lines[i])) list.append(inline(node('li'), lines[i++].replace(item, '')));
+      el.append(list); continue;
+    }
+    const body = [];
+    while (i < lines.length && lines[i].trim() && !BLOCK.test(lines[i])) body.push(lines[i++]);
+    el.append(inline(node('p'), body.join('\n')));
+  }
+}
+function inline(el, s) {
+  const re = /`([^`\n]+)`|\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g; let last = 0, m;
+  while ((m = re.exec(s))) {
+    if (m.index > last) el.append(s.slice(last, m.index));
+    if (m[1] !== undefined) el.append(node('code', '', m[1]));
+    else if (m[2] !== undefined) el.append(node('strong', '', m[2]));
+    else { const a = node('a', '', m[3]); a.href = m[4]; a.target = '_blank'; a.rel = 'noopener noreferrer'; el.append(a); }
+    last = re.lastIndex;
+  }
+  if (last < s.length) el.append(s.slice(last));
+  return el;
+}
+function toolSummary(args) {
+  if (args == null) return '';
+  if (typeof args !== 'object') return String(args);
+  for (const key of ['command', 'fullCommandText', 'path', 'file_path', 'filePath', 'url', 'query', 'pattern', 'prompt']) if (typeof args[key] === 'string') return args[key];
+  const first = Object.values(args).find(v => typeof v === 'string');
+  return first || '';
+}
+function toolIcon(name) {
+  const n = String(name).toLowerCase();
+  if (/bash|shell|powershell|command/.test(n)) return 'terminal';
+  if (/edit|write|create|view|read|file|glob|grep/.test(n)) return 'file';
+  if (/fetch|web|url/.test(n)) return 'globe';
+  if (n.includes('-') || n.includes('mcp')) return 'plug';
+  return 'tool';
+}
+function entry(view, key, iconName, iconClass, title, subject, body) {
+  let d = view.entries.get(key);
+  if (!d) {
+    d = node('details'); const s = node('summary');
+    s.append(icon(iconName), node('b'), node('code'), icon('loader'));
+    d.append(s, node('pre')); view.entries.set(key, d); view.activity.append(d);
+  }
+  const [lead, b, code, tail] = d.firstChild.children;
+  setIcon(lead, iconName); text(b, title); text(code, subject);
+  if (iconClass === 'running') setIcon(tail, 'loader', 'spin'); else if (iconClass === 'wait') setIcon(tail, 'shield', 'wait'); else if (iconClass === 'bad') setIcon(tail, 'x-circle', 'bad'); else if (iconClass === 'ok') setIcon(tail, 'check', 'ok'); else tail.setAttribute('class', 'icon sr');
+  text(d.lastChild, body);
+}
+function renderCompaction(v, turn, active) {
+  v.prompt.hidden = true; v.answer.hidden = true; v.activity.hidden = true; v.note.hidden = false; v.root.classList.add('compact');
+  if (active) return text(v.note, 'Compacting context…');
+  const r = parse(turn.answer) || {};
+  if (turn.status === 'done' && r.success) text(v.note, 'Context compacted · ' + (r.messagesRemoved ?? 0) + ' messages, ' + (r.tokensRemoved ?? 0) + ' tokens removed');
+  else text(v.note, 'Compaction ' + (STATES[turn.status] || turn.status || 'did not complete').toLowerCase());
+}
+function render(ctx) {
+  if (context !== ctx) return;
+  const follow = nearBottom(), scrollTop = $('transcript').scrollTop;
+  const keep = new Set(), eventsByTurn = new Map();
+  for (const event of [...ctx.events.values()].sort((a,b) => a.seq - b.seq)) {
+    const key = String(event.turn_id); if (!eventsByTurn.has(key)) eventsByTurn.set(key, []); eventsByTurn.get(key).push(event);
+  }
+  ctx.active = false;
+  let settled = 0;
+  ctx.turns.forEach((turn, index) => {
+    const id = String(turn.id); keep.add(id);
+    let v = turnNodes.get(id); if (!v) { v = newTurn(id); turnNodes.set(id, v); }
+    const status = String(turn.status || '').toLowerCase(), active = !DONE.has(status);
+    ctx.active ||= active; if (!active) settled++;
+    if (turn.kind === 'compact') {
+      renderCompaction(v, turn, active);
+      v.state.hidden = true; text(v.error, active ? '' : (turn.error ? format(turn.error) : ''));
+    } else {
+      v.note.hidden = true;
+      text(v.prompt, turn.prompt);
+      let draft = '', thoughts = ''; const tools = new Map();
+      for (const e of eventsByTurn.get(id) || []) {
+        const d = e.data || {};
+        if (e.type === 'assistant.message_delta') draft += d.deltaContent || d.delta_content || '';
+        if (e.type === 'assistant.reasoning_delta') thoughts += d.deltaContent || d.delta_content || '';
+        if (e.type === 'tool.execution_start' || e.type === 'tool.execution_complete') {
+          const key = String(d.toolCallId ?? d.tool_call_id ?? e.seq), old = tools.get(key) || {};
+          tools.set(key, {...old, ...d, complete: e.type === 'tool.execution_complete' || old.complete});
+        }
+      }
+      if (thoughts) entry(v, 'thoughts', 'thought', active && !draft && !tools.size ? 'running' : '', 'Reasoning', '', thoughts);
+      for (const [key, tool] of tools) {
+        const name = tool.toolName || tool.tool_name || 'Tool';
+        const outcome = !tool.complete ? (active ? (ctx.approvalCount ? 'wait' : 'running') : 'bad') : (tool.success === false ? 'bad' : 'ok');
+        const result = tool.result?.content ?? tool.result ?? tool.error ?? '';
+        entry(v, 'tool:' + key, toolIcon(name), outcome, name, toolSummary(tool.arguments), 'Arguments\n' + format(tool.arguments ?? {}) + (tool.complete ? '\n\nResult\n' + format(result) : ''));
+      }
+      const waiting = active && !turn.answer && !draft, working = waiting && status !== 'queued' && !v.entries.size;
+      v.answer.classList.toggle('working', working);
+      if (working || !(turn.answer || draft)) { v.answer.md = null; text(v.answer, working ? 'Working' : ''); }
+      else markdown(v.answer, turn.answer || draft);
+      text(v.error, turn.error ? format(turn.error) : '');
+      const label = status === 'done' ? '' : (status === 'running' && !waiting ? '' : STATES[status] || (active ? '' : status));
+      v.state.hidden = !label || (status === 'running');
+      v.state.classList.toggle('bad', ['error','failed','interrupted'].includes(status));
+      setIcon(v.stateIcon, status === 'queued' ? 'loader' : (['cancelled','canceled','stopped'].includes(status) ? 'stop' : 'alert'));
+      text(v.stateText, label);
+    }
+    const current = $('turns').children[index]; if (current !== v.root) $('turns').insertBefore(v.root, current || null);
+  });
+  for (const [id, v] of turnNodes) if (!keep.has(id)) { v.root.remove(); turnNodes.delete(id); }
+  $('empty').hidden = ctx.turns.length > 0;
+  if (ctx.settled !== undefined && settled > ctx.settled && ctx.contextLoaded) loadContext(ctx);
+  ctx.settled = settled;
+  controls();
+  if (follow) bottom(); else { $('transcript').scrollTop = scrollTop; $('jump').hidden = false; }
+}
+function applyEvent(ctx, event) {
+  if (!Number.isFinite(event.seq)) return;
+  ctx.after = Math.max(ctx.after, event.seq); ctx.events.set(event.seq, event);
+  if (event.type === 'turn.updated' && event.data?.id != null) {
+    const i = ctx.turns.findIndex(t => String(t.id) === String(event.data.id));
+    if (i < 0) ctx.turns.push(event.data); else ctx.turns[i] = {...ctx.turns[i], ...event.data};
+  }
+}
+async function snapshot(ctx) {
+  const data = await json('/api/sessions/' + encodeURIComponent(ctx.id), {signal:ctx.controller.signal});
+  if (context !== ctx) return;
+  ctx.turns = data.turns || []; ctx.ready = true;
+  for (const e of data.events || []) { ctx.events.set(e.seq, e); ctx.after = Math.max(ctx.after, e.seq); }
+  text($('title'), data.session.title || 'Untitled conversation');
+  if (document.activeElement !== $('model')) $('model').value = data.session.model;
+  const i = sessions.findIndex(s => String(s.id) === ctx.id);
+  if (i >= 0) sessions[i] = data.session; else sessions.unshift(data.session);
+  ctx.approvalCount = (data.approvals || []).length;
+  renderSessions(); render(ctx); renderApprovals(data.approvals || []);
+}
+function scheduleSnapshot(ctx) {
+  if (!ctx || ctx.timer) return;
+  ctx.timer = setTimeout(async () => {
+    ctx.timer = null;
+    if (context !== ctx) return;
+    try { await snapshot(ctx); } catch (e) { if (!ctx.controller.signal.aborted) notice(e.message); }
+  }, 500);
+}
+async function stream(ctx) {
+  const signal = ctx.controller.signal; let backoff = 1000;
+  while (!signal.aborted) {
+    try {
+      // Reconcile after a disconnect, including turns whose final event was missed.
+      await snapshot(ctx);
+      const r = await api('/api/sessions/' + encodeURIComponent(ctx.id) + '/events?after=' + ctx.after, {signal});
+      if (!r.body) throw new Error('Streaming is not supported by this browser.');
+      status('Live', 'live'); notice();
+      const reader = r.body.getReader(), decoder = new TextDecoder();
+      let line = '', dataLines = [], previousCR = false;
+      function consumeLine() {
+        if (line === '') {
+          if (dataLines.length) {
+            const event = JSON.parse(dataLines.join('\n')); applyEvent(ctx, event); render(ctx); scheduleSnapshot(ctx); backoff = 1000;
+          }
+          dataLines = [];
+        } else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
+        line = '';
+      }
+      try {
+        while (!signal.aborted) {
+          const chunk = await reader.read(); if (chunk.done) break;
+          for (const char of decoder.decode(chunk.value, {stream:true})) {
+            if (char === '\n' && previousCR) { previousCR = false; continue; }
+            previousCR = char === '\r';
+            if (char === '\r' || char === '\n') consumeLine(); else line += char;
+          }
+        }
+      } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+      if (!signal.aborted) throw new Error('Live connection closed.');
+    } catch (e) {
+      if (signal.aborted) return;
+      status('Reconnecting…', 'wait');
+      if (backoff >= 4000) notice(e.message + ' Retrying automatically.');
+      await pause(backoff, signal); backoff = Math.min(backoff * 2, 15000);
+    }
+  }
+}
+function detach() {
+  if (context) { context.controller.abort(); clearTimeout(context.timer); }
+  context = null;
+}
+function openSidebar(open) {
+  $('sidebar').classList.toggle('open', open); $('scrim').classList.toggle('open', open);
+  $('menu').setAttribute('aria-expanded', String(open));
+}
+function selectSession(id) {
+  drafts.set(selected || 'new', $('prompt').value);
+  detach(); selected = id;
+  $('approvals').replaceChildren(); $('approvals').dataset.ids = '';
+  $('prompt').value = drafts.get(id || 'new') || ''; grow();
+  $('turns').replaceChildren(); turnNodes.clear();
+  openSidebar(false);
+  text($('title'), id ? 'Loading…' : 'New conversation');
+  text($('context-label'), '');
+  $('empty').hidden = Boolean(id); controls(); renderSessions();
+  if (id) { context = {id, controller:new AbortController(), events:new Map(), turns:[], after:0, active:false, ready:false, timer:null}; status('Connecting…', 'wait'); stream(context); }
+  else { status(config ? 'Ready' : 'Disconnected', config ? 'live' : 'down'); $('prompt').focus(); }
+}
+async function connect() {
+  const gen = ++generation; bootController?.abort(); detach(); config = null; controls();
+  const controller = bootController = new AbortController(); let backoff = 1000;
+  if (!token) { $('auth').hidden = false; $('token').focus(); status('Access token required', 'down'); return; }
+  while (!controller.signal.aborted) {
+    try {
+      status('Connecting…', 'wait');
+      const [cfg, list] = await Promise.all([json('/api/config', {signal:controller.signal}), json('/api/sessions', {signal:controller.signal})]);
+      if (gen !== generation) return;
+      config = cfg; sessions = list; renderConfig(); renderSessions(); $('auth').hidden = true; notice();
+      if (selected && sessions.some(s => String(s.id) === selected)) selectSession(selected);
+      else if (!selected && sessions.length) selectSession(String(sessions[0].id));
+      else selectSession(null);
+      controls(); return;
+    } catch (e) {
+      if (controller.signal.aborted || !$('auth').hidden) { status('Access token required', 'down'); return; }
+      status('Backend unavailable', 'down'); notice(e.message + ' Retrying automatically.');
+      await pause(backoff, controller.signal); backoff = Math.min(backoff * 2, 15000);
+    }
+  }
+}
+function tokens(n) { return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n); }
+async function loadContext(ctx = context) {
+  if (!ctx) return;
+  try {
+    const data = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/context');
+    if (context !== ctx) return;
+    ctx.contextLoaded = true;
+    text($('context-info'), format(data));
+    const c = data.context?.contextInfo, box = $('context-summary'); box.replaceChildren();
+    const compactions = data.attribution?.contextAttribution?.compactions?.count ?? 0;
+    if (!c || !c.limit) { box.append(node('p', '', 'Usage appears after the first turn in this server session.')); text($('context-label'), ''); return; }
+    const pct = n => Math.min(100, n / c.limit * 100);
+    const percent = Math.round(pct(c.totalTokens));
+    text($('context-label'), percent + '%'); $('context-button').setAttribute('aria-label', 'Context usage ' + percent + '%');
+    box.className = '';
+    box.append(node('p', '', tokens(c.totalTokens) + ' of ' + tokens(c.limit) + ' tokens (' + percent + '%)' + (c.displayModelName || c.modelName ? ' · ' + (c.displayModelName || c.modelName) : '')));
+    const meter = node('div', 'meter'); meter.setAttribute('role', 'img'); meter.setAttribute('aria-label', percent + '% of the context window used');
+    for (const n of [c.systemTokens, c.toolDefinitionsTokens, c.conversationTokens]) { const i = node('i'); i.style.width = pct(n) + '%'; meter.append(i); }
+    if (c.compactionThreshold) { const mark = node('b'); mark.style.left = pct(c.compactionThreshold) + '%'; mark.title = 'Automatic compaction threshold'; meter.append(mark); }
+    const legend = node('div', 'legend');
+    for (const [label, n, colour] of [['System', c.systemTokens, 'var(--muted)'], ['Tools', c.toolDefinitionsTokens, 'var(--accent)'], ['Conversation', c.conversationTokens, 'var(--ok)']]) {
+      const s = node('span', '', label + ' ' + tokens(n || 0)); s.style.setProperty('--c', colour); legend.append(s);
+    }
+    if (c.compactionThreshold) { const s = node('span', 'threshold', 'Auto-compacts at ' + tokens(c.compactionThreshold)); s.style.setProperty('--c', 'var(--warn)'); legend.append(s); }
+    box.append(meter, legend, node('p', 'muted', compactions ? compactions + ' compaction' + (compactions === 1 ? '' : 's') + ' so far' : 'No compactions yet'));
+    box.lastChild.style.cssText = 'font-size:.82rem;margin-top:.5rem';
+  } catch (error) { text($('context-summary'), error.message); }
+}
+function grow() { const p = $('prompt'); p.style.height = 'auto'; p.style.height = Math.min(p.scrollHeight, innerHeight * 0.35) + 'px'; }
+$('auth').querySelector('form').onsubmit = event => {
+  event.preventDefault(); token = $('token').value.trim(); if (!token) return;
+  try { sessionStorage.setItem(storageKey, token); } catch { notice('Session storage is unavailable; the token lasts until reload.'); }
+  $('token').value = ''; $('auth').hidden = true; connect();
+};
+for (const button of document.querySelectorAll('[data-close]')) button.onclick = () => button.closest('dialog').close();
+for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+$('open-settings').onclick = () => $('settings-dialog').showModal();
+$('change-token').onclick = () => { $('settings-dialog').close(); $('auth').hidden = false; $('token').focus(); };
+$('context-button').onclick = () => { if (!selected) return; $('context-dialog').showModal(); loadContext(); };
+$('compact').onclick = async () => {
+  if (!selected) return;
+  $('compact').disabled = true;
+  try { await json('/api/sessions/' + encodeURIComponent(selected) + '/compact', {method:'POST', body:{instructions:'', request_id:requestId()}}); $('context-dialog').close(); scheduleSnapshot(context); }
+  catch(error) { notice(error.message); } finally { $('compact').disabled = false; }
+};
+$('notice-close').onclick = () => notice();
+$('menu').onclick = () => openSidebar(!$('sidebar').classList.contains('open'));
+$('scrim').onclick = () => openSidebar(false);
+$('new').onclick = () => { if (!sending) selectSession(null); };
+$('jump').onclick = bottom;
+$('transcript').addEventListener('scroll', () => { if (nearBottom()) $('jump').hidden = true; }, {passive:true});
+$('prompt').oninput = () => { drafts.set(selected || 'new', $('prompt').value); grow(); controls(); };
+$('prompt').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); $('composer').requestSubmit(); } };
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && $('sidebar').classList.contains('open')) openSidebar(false); });
+$('composer').onsubmit = async event => {
+  event.preventDefault();
+  const prompt = $('prompt').value.trim();
+  if (!prompt || sending || !config || (context && !context.ready)) return;
+  sending = true; controls(); renderSessions(); notice();
+  try {
+    if (!selected) {
+      if (!$('model').value) throw new Error('Choose a model first.');
+      const title = prompt.split('\n')[0].slice(0, 60).trim() || 'New conversation';
+      const s = await json('/api/sessions', {method:'POST', body:{model:$('model').value, title}});
+      sessions.unshift(s); selectSession(String(s.id)); $('prompt').value = prompt;
+    }
+    const id = selected;
+    if (!pending || pending.session !== id || pending.prompt !== prompt) pending = {session:id, prompt, request_id:requestId()};
+    const turn = await json('/api/sessions/' + encodeURIComponent(id) + '/turns', {method:'POST', body:{prompt, request_id:pending.request_id}});
+    pending = null; drafts.delete(id); drafts.delete('new'); $('prompt').value = ''; grow();
+    if (context?.id === id) {
+      const index = context.turns.findIndex(t => String(t.id) === String(turn.id));
+      if (index < 0) context.turns.push(turn); else context.turns[index] = turn;
+      render(context); scheduleSnapshot(context); bottom();
+    }
+  } catch (e) { notice(e.message + ' Your message was kept; sending it again will not duplicate it.'); }
+  finally { sending = false; controls(); renderSessions(); }
+};
+$('stop').onclick = async () => {
+  const ctx = context; if (!ctx) return;
+  $('stop').disabled = true;
+  try { await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/abort', {method:'POST', body:{}}); scheduleSnapshot(ctx); }
+  catch (e) { notice(e.message); } finally { controls(); }
+};
+if (matchMedia('(pointer:fine)').matches) $('prompt').placeholder = 'Message · Shift+Enter for a new line';
+window.addEventListener('pagehide', () => { bootController?.abort(); detach(); });
+connect();
+</script>
+</body>
+</html>

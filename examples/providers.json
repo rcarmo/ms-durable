@@ -1,0 +1,22 @@
+{
+  "providers": {
+    "foundry": {
+      "type": "azure",
+      "base_url": "https://YOUR-RESOURCE.openai.azure.com",
+      "wire_api": "completions",
+      "api_key_env": "AZURE_OPENAI_API_KEY"
+    }
+  },
+  "models": [
+    {
+      "id": "chat",
+      "provider": "foundry",
+      "wire_model": "YOUR-DEPLOYMENT",
+      "model_id": "gpt-4.1",
+      "name": "Foundry chat",
+      "max_context_window_tokens": 128000,
+      "max_prompt_tokens": 112000,
+      "max_output_tokens": 16000
+    }
+  ]
+}

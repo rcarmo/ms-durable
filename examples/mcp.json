@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "memento": {
+      "type": "http",
+      "url": "http://YOUR-MEMENTO-HOST:PORT/mcp",
+      "auth": "bearer",
+      "bearerTokenEnv": "MEMENTO_TOKEN",
+      "tools": ["*"]
+    }
+  }
+}
