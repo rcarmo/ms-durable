@@ -170,6 +170,10 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 .reasoning-content{margin:4px 0 8px 30px;overflow-wrap:anywhere;color:var(--muted)}
 .link-preview:not(:empty){border:1px solid var(--border);border-radius:4px;padding:8px 12px;margin:6px 0;overflow-wrap:anywhere}.link-preview p{margin:4px 0 0}
 .link-preview img{max-width:100%;max-height:160px;display:block;margin-bottom:6px;object-fit:contain}
+.shared-files:not(:empty){display:flex;flex-wrap:wrap;gap:.5rem;margin:.5rem 0}
+.shared-file{min-width:0;max-width:100%;border:1px solid var(--border);border-radius:4px;padding:.5rem}
+.shared-file img{display:block;max-width:100%;max-height:360px;object-fit:contain;margin-bottom:.5rem}
+.shared-file button{max-width:100%;overflow-wrap:anywhere;text-align:start}
 </style>
 </head>
 <body>
@@ -410,6 +414,7 @@ function describeRequest(r) {
   if (kind === 'write') return ['file', 'Write a file', r.fileName || r.path || (r.possiblePaths || []).join(', '), r.intention];
   if (kind === 'url') return ['globe', 'Open a URL', r.url || '', r.intention];
   if (kind === 'mcp') return ['plug', 'Use an MCP tool', [r.serverName, r.toolTitle || r.toolName].filter(Boolean).join(' · '), r.intention];
+  if (kind === 'share_file') return ['file', 'Share a file in this conversation', r.path, r.intention];
   if (kind === 'custom-tool') return ['tool', 'Use an app tool', r.toolName || '', r.toolDescription];
   return ['shield', 'Allow ' + kind, r.toolName || '', r.intention];
 }
@@ -427,6 +432,7 @@ function renderApprovals(items) {
     const raw = node('details'); raw.append(node('summary', '', 'Request details'), node('pre', '', format(request))); card.append(raw);
     const actions = node('div', 'actions');
     for (const [label, allow, remember] of [['Deny', false, false], ['Approve once', true, false], ['Approve for this session', true, true]]) {
+      if (remember && request.kind === 'share_file') continue;
       const button = node('button', 'quiet'); button.type = 'button';
       text(button, label);
       button.onclick = async () => {
@@ -553,8 +559,9 @@ function newTurn(id) {
   const promptMeta = messageMeta(id, 'prompt', prompt), answerMeta = messageMeta(id, 'answer', answer);
   root.id = 'message-' + id; root.tabIndex = -1;
   answerMeta.classList.add('answer-meta');
-  root.append(note, promptMeta, prompt, pictures, activity, answerMeta, answer, error, state);
-  return {root, prompt, pictures, promptMeta, answerMeta, answer, error, activity, state, stateIcon, stateText, note, entries:new Map()};
+  const files = node('div', 'shared-files');
+  root.append(note, promptMeta, prompt, pictures, activity, answerMeta, answer, files, error, state);
+  return {root, prompt, pictures, promptMeta, answerMeta, answer, files, error, activity, state, stateIcon, stateText, note, entries:new Map()};
 }
 function setTheme(value) {
   $('theme').value = value;
@@ -700,6 +707,33 @@ function showImages(view, turn, ctx) {
     loadChatImage(img, '/media/' + encodeURIComponent(ctx.id) + '/' + encodeURIComponent(turn.id) + '/' + item.ordinal, ctx);
   }
 }
+function showSharedFiles(view, turn, ctx) {
+  const files = turn.files || [], key = files.map(file => file.id).join(',');
+  if (view.files.dataset.key === key) return;
+  view.files.dataset.key = key; view.files.replaceChildren();
+  for (const file of files) {
+    const url = '/media/shared/' + encodeURIComponent(ctx.id) + '/' + encodeURIComponent(file.id) + '/file';
+    const card = node('div', 'shared-file');
+    if (['image/png','image/jpeg','image/gif','image/webp'].includes(file.mime)) {
+      const img = node('img'); img.alt = file.name; card.append(img);
+      loadChatImage(img, url, ctx);
+    }
+    const download = node('button', 'quiet', file.name); download.type = 'button';
+    download.setAttribute('aria-label', 'Download ' + file.name);
+    download.onclick = async () => {
+      download.disabled = true;
+      try {
+        const blob = await (await api(url, {signal:ctx.controller.signal})).blob();
+        if (context !== ctx) return;
+        const href = URL.createObjectURL(blob), a = node('a');
+        a.href = href; a.download = file.name; document.body.append(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(href), 1000);
+      } catch (error) { if (context === ctx) notice(error.message); }
+      finally { download.disabled = false; }
+    };
+    card.append(download); view.files.append(card);
+  }
+}
 function addLinkPreviews(el) {
   const ctx = context;
   if (!ctx || !config?.link_previews?.enabled || !el.matches('.prompt,.answer')) return;
@@ -747,7 +781,7 @@ function markdown(el, source) {
 const toolLabels = {
   plan:'Working on the plan', chat:'Sending a message', context:'Checking context usage', compact:'Compacting context',
   list_models:'Listing models', list_sessions:'Listing sessions', observe_session:'Inspecting the session timeline',
-  read_attachment:'Reading an attachment', create_session:'Creating a session', set_model:'Changing the model',
+  attach_file:'Sharing a file', read_attachment:'Reading an attachment', create_session:'Creating a session', set_model:'Changing the model',
   context_status:'Checking context usage', compact_session:'Compacting context', send_message:'Sending a message',
   bash:'Running a command', shell:'Running a command', powershell:'Running a command',
   view:'Reading a file', read:'Reading a file', read_file:'Reading a file', edit:'Editing a file',
@@ -846,7 +880,7 @@ function render(ctx) {
       text(v.answerMeta.firstChild, ctx.session?.handle ? '@' + ctx.session.handle : sessionName(ctx.session));
       const raw = turn.prompt || '';
       if (v.prompt.dataset.raw !== raw) { v.prompt.dataset.raw = raw; markdown(v.prompt, raw); }
-      showImages(v, turn, ctx);
+      showImages(v, turn, ctx); showSharedFiles(v, turn, ctx);
       stamp(v.promptMeta, turn.created_at); stamp(v.answerMeta, turn.finished_at);
       v.promptMeta.hidden = !raw && !(turn.images || []).length;
       for (const button of [...v.answerMeta.children].slice(2)) button.hidden = active;
@@ -959,7 +993,7 @@ async function stream(ctx) {
           if (dataLines.length) {
             const event = JSON.parse(dataLines.join('\n')); applyEvent(ctx, event);
             if (!ctx.frame) ctx.frame = requestAnimationFrame(() => { ctx.frame = 0; render(ctx); });
-            if (['app.turn_queued','app.turn_started','app.turn_settled','app.approval','app.session_renamed'].includes(event.type)) scheduleSnapshot(ctx);
+            if (['app.turn_queued','app.turn_started','app.turn_settled','app.file_shared','app.approval','app.session_renamed'].includes(event.type)) scheduleSnapshot(ctx);
             backoff = 1000;
           }
           dataLines = [];

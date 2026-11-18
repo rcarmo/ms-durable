@@ -316,6 +316,17 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
             raise HTTPException(404, "Unknown media")
         return media_response(item)
 
+    @app.get("/media/shared/{sid}/{asset}/file", dependencies=[Depends(auth)])
+    async def shared_media(sid: str, asset: str):
+        item = await app.state.store.one(
+            "SELECT mime,content FROM shared_files JOIN turns ON turns.id=shared_files.turn_id "
+            "WHERE turns.session_id=? AND shared_files.id=?",
+            (sid, asset),
+        )
+        if item is None:
+            raise HTTPException(404, "Unknown media")
+        return media_response(item)
+
     def media_response(item):
         return Response(
             item["content"],

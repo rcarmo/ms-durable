@@ -22,6 +22,7 @@ from copilot.rpc import (
 from copilot.tools import Tool, ToolBinaryResult, ToolResult
 
 from .config import Settings
+from .media import workspace_file
 from .plans import PlanInput
 from .providers import Providers
 from .session_fs import SQLiteSessionFS
@@ -307,6 +308,81 @@ class Runtime:
                 handler=handle,
             )
 
+        async def attach(args):
+            tid = self.active.get(own_sid)
+            if not tid:
+                raise ValueError("File sharing requires an active turn")
+            raw_path = args.get("path")
+            if (
+                not isinstance(raw_path, str)
+                or not raw_path
+                or len(raw_path) > 1024
+                or any(ord(c) < 32 for c in raw_path)
+            ):
+                raise ValueError("Provide a workspace file path")
+            root = self.settings.working_directory.resolve()
+            path = Path(raw_path)
+            if path.is_absolute():
+                path = path.relative_to(root)
+            if not path.parts or any(part.startswith(".") for part in path.parts):
+                raise ValueError("Share a non-hidden file inside the workspace")
+            if self.redact(str(path)) != str(path):
+                raise ValueError("The path contains a server credential and cannot be shared")
+            if not await self.request_approval(
+                own_sid,
+                {
+                    "kind": "share_file",
+                    "path": self.redact(str(path)),
+                    "intention": "Copy this file into the conversation for viewing or download.",
+                },
+            ):
+                raise ValueError("File sharing was declined")
+            protected = [
+                Path(p).resolve()
+                for p in (
+                    self.settings.data,
+                    self.store.path,
+                    Path(str(self.store.path) + "-wal"),
+                    Path(str(self.store.path) + "-shm"),
+                    self.settings.data / "web-token",
+                    self.settings.data / "runtime",
+                    self.settings.data / "runtime-home",
+                    Path.home() / ".pi",
+                    self.settings.auth_file,
+                    self.settings.providers_file,
+                    self.settings.mcp_file,
+                    *self.settings.skill_directories,
+                )
+                if p is not None
+            ]
+            # The workspace can be a child of the server data directory; protect
+            # its state siblings without excluding a deliberately configured workspace.
+            if (
+                root.is_relative_to(self.settings.data.resolve())
+                and root != self.settings.data.resolve()
+            ):
+                protected.remove(self.settings.data.resolve())
+            try:
+                name, mime, digest, content = await asyncio.to_thread(
+                    workspace_file, root, str(path), protected
+                )
+            except OSError:
+                raise ValueError(
+                    "Could not open a regular workspace file without following symlinks"
+                ) from None
+            if any(
+                secret and secret.encode() in content
+                for secret in self.secret_values | self.providers.secrets
+            ):
+                raise ValueError("The file contains a server credential and cannot be shared")
+            asset = await self.store.share_file(own_sid, tid, name.name, mime, digest, content)
+            return {
+                "id": asset,
+                "name": name.name,
+                "size": len(content),
+                "status": "attached to the timeline",
+            }
+
         async def plan(args):
             change = PlanInput.model_validate(self.redact(args))
             if change.action == "read":
@@ -501,6 +577,18 @@ class Runtime:
                 attachment,
             ),
             make(
+                "attach_file",
+                "Share a generated workspace file in this conversation. The user must approve. Use this when asked to attach, show or share a file; do not paste absolute paths or bytes as a substitute.",
+                {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to a regular file in the configured workspace (max 10 MiB).",
+                    }
+                },
+                ["path"],
+                attach,
+            ),
+            make(
                 "create_session",
                 "Create an independent agent session in this application.",
                 {"title": string, "model": string, "handle": string},
@@ -627,19 +715,26 @@ class Runtime:
         )
         if key in self.session_approvals or not await self.store.approvals_enabled():
             return PermissionDecisionApproveOnce()
+        return (
+            PermissionDecisionApproveOnce()
+            if await self.request_approval(sid, raw, key)
+            else PermissionDecisionReject()
+        )
+
+    async def request_approval(self, sid, raw, key=None):
         aid = uid()
         turn_id = self.active.get(sid)
         future = asyncio.get_running_loop().create_future()
         self.approvals[aid] = future
-        self.approval_keys[aid] = key
+        if key is not None:
+            self.approval_keys[aid] = key
         await self.store.execute(
             "INSERT INTO approvals VALUES(?,?,?,?,?,?)",
             (aid, sid, turn_id, json.dumps(raw, default=str), "pending", time.time()),
         )
         await self.store.event(sid, turn_id, "app.approval", {"id": aid, "request": raw})
         try:
-            allowed = await future
-            return PermissionDecisionApproveOnce() if allowed else PermissionDecisionReject()
+            return await future
         finally:
             self.approvals.pop(aid, None)
             self.approval_keys.pop(aid, None)
@@ -658,7 +753,7 @@ class Runtime:
             )
             if future.done():
                 raise ValueError("Approval is no longer active")
-            if allow and remember:
+            if allow and remember and aid in self.approval_keys:
                 self.session_approvals.add(self.approval_keys[aid])
             future.set_result(allow)
 

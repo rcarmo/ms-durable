@@ -60,6 +60,10 @@ CREATE TABLE IF NOT EXISTS turn_images(
  turn_id TEXT NOT NULL REFERENCES turns(id), ordinal INTEGER NOT NULL,
  name TEXT NOT NULL, mime TEXT NOT NULL, digest TEXT NOT NULL, content BLOB NOT NULL,
  PRIMARY KEY(turn_id,ordinal));
+CREATE TABLE IF NOT EXISTS shared_files(
+ id TEXT PRIMARY KEY, turn_id TEXT NOT NULL REFERENCES turns(id),
+ name TEXT NOT NULL, mime TEXT NOT NULL, digest TEXT NOT NULL, content BLOB NOT NULL,
+ UNIQUE(turn_id,name,digest));
 CREATE TABLE IF NOT EXISTS sdk_files(
  namespace TEXT NOT NULL, path TEXT NOT NULL, content BLOB,
  is_directory INTEGER NOT NULL, mtime REAL NOT NULL,
@@ -216,6 +220,7 @@ CREATE TABLE IF NOT EXISTS sdk_files(
                 )
             for sql in (
                 "DELETE FROM turn_images WHERE turn_id IN (SELECT id FROM turns WHERE session_id=?)",
+                "DELETE FROM shared_files WHERE turn_id IN (SELECT id FROM turns WHERE session_id=?)",
                 "DELETE FROM turns WHERE session_id=?",
                 "DELETE FROM events WHERE session_id=?",
                 "DELETE FROM approvals WHERE session_id=?",
@@ -335,6 +340,39 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             )
             return value
 
+    async def share_file(self, sid, tid, name, mime, digest, content):
+        async with self.transaction() as db:
+            if not await (
+                await db.execute(
+                    "SELECT 1 FROM turns WHERE id=? AND session_id=? AND status='running'",
+                    (tid, sid),
+                )
+            ).fetchone():
+                raise ValueError("File sharing requires an active turn")
+            args = (tid, name, digest)
+            row = await (
+                await db.execute(
+                    "SELECT id FROM shared_files WHERE turn_id=? AND name=? AND digest=?", args
+                )
+            ).fetchone()
+            if row:
+                return row["id"]
+            count = await (
+                await db.execute("SELECT count(*) FROM shared_files WHERE turn_id=?", (tid,))
+            ).fetchone()
+            if count[0] >= 5:
+                raise ValueError("Share at most five files per turn")
+            asset = uid()
+            await db.execute(
+                "INSERT INTO shared_files VALUES(?,?,?,?,?,?)",
+                (asset, tid, name, mime, digest, content),
+            )
+            await db.execute(
+                "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
+                (sid, tid, "app.file_shared", "{}"),
+            )
+            return asset
+
     async def snapshot(self, sid):
         session = await self.session(sid)
         turns = await self.rows(
@@ -349,8 +387,16 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             (sid,),
         ):
             images.setdefault(row.pop("turn_id"), []).append(row)
+        files = {}
+        for row in await self.rows(
+            "SELECT shared_files.id,turn_id,name,mime,length(content) AS size FROM shared_files "
+            "JOIN turns ON turns.id=shared_files.turn_id WHERE turns.session_id=? ORDER BY shared_files.rowid",
+            (sid,),
+        ):
+            files.setdefault(row.pop("turn_id"), []).append(row)
         for turn in turns:
             turn["images"] = images.get(turn["id"], [])
+            turn["files"] = files.get(turn["id"], [])
         return {
             "session": session,
             "turns": turns,

@@ -3,6 +3,9 @@
 import base64
 import binascii
 import hashlib
+import os
+import stat
+from pathlib import Path
 from xml.etree import ElementTree
 
 from pydantic import BaseModel, Field
@@ -16,6 +19,42 @@ RASTER = {
     "image/gif": lambda b: b.startswith((b"GIF87a", b"GIF89a")),
     "image/webp": lambda b: b.startswith(b"RIFF") and b[8:12] == b"WEBP",
 }
+
+
+MAX_SHARED = 10 * 1024 * 1024
+
+
+def workspace_file(root, name, protected):
+    path = Path(name)
+    if path.is_absolute():
+        path = path.relative_to(root)
+    if not path.parts or any(part == ".." or part.startswith(".") for part in path.parts):
+        raise ValueError("Share a non-hidden file inside the workspace")
+    candidate = root / path
+    if any(candidate == blocked or candidate.is_relative_to(blocked) for blocked in protected):
+        raise ValueError("This path cannot be shared")
+    # Walk from an open root; never follow symlinks or block on special files.
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    fd = os.open(root, flags | os.O_DIRECTORY)
+    try:
+        for i, part in enumerate(path.parts):
+            mode = os.O_DIRECTORY if i < len(path.parts) - 1 else os.O_NONBLOCK
+            child = os.open(part, flags | mode, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_SHARED:
+            raise ValueError("Share a regular file of at most 10 MiB (no hard links)")
+        with os.fdopen(os.dup(fd), "rb") as file:
+            content = file.read(MAX_SHARED + 1)
+        if len(content) > MAX_SHARED:
+            raise ValueError("Shared files must be at most 10 MiB")
+    finally:
+        os.close(fd)
+    mime = next(
+        (mime for mime, matches in RASTER.items() if matches(content)), "application/octet-stream"
+    )
+    return path, mime, hashlib.sha256(content).hexdigest(), content
 
 
 class ImageInput(BaseModel):

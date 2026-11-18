@@ -57,6 +57,8 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   if (path === '/api/sessions/s1') return json({session: sessions[0], turns, events, approvals, plan});
   if (path === '/media/s1/t1/0') return new Response(svg, {headers:{'Content-Type':'image/svg+xml'}});
   if (path === '/media/s1/t1/1') return new Response(png, {headers:{'Content-Type':'image/png'}});
+  if (path === '/media/shared/s1/test-gif/file') return new Response(Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'), {headers:{'Content-Type':'image/gif'}});
+  if (path === '/media/shared/s1/test-report/file') return new Response('Report', {headers:{'Content-Type':'application/octet-stream'}});
   if (path === '/api/sessions/s1/timeline') return json(url.searchParams.get('after') === '0' ? {events:events.slice(0,2),next_after:2} : {events:events.slice(2),next_after:null});
   if (path === '/api/sessions/s1/turns' && request.method === 'POST') {
     const body = await request.json() as any;
@@ -322,6 +324,15 @@ try {
     await remove.click(); await confirm.getByRole('button', {name:'Delete', exact:true}).click();
     await row.waitFor({state:'detached'});
     await page.locator('#title').filter({hasText:sessions[0].title}).waitFor();
+  });
+  await run('agent attachments: GIF preview and authenticated download', {width:1024,height:768}, 'light', async page => {
+    await page.route('**/api/sessions/s1', route => route.fulfill({json:{session:sessions[0], turns:[{...turns[0], files:[
+      {id:'test-gif', name:'demo.gif', mime:'image/gif'}, {id:'test-report', name:'report.txt', mime:'application/octet-stream'},
+    ]}], events:[], approvals:[]}}));
+    await page.goto(url + '#token=' + token);
+    await page.waitForFunction(() => document.querySelector<HTMLImageElement>('.shared-file img[alt="demo.gif"]')?.naturalWidth === 1);
+    const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button',{name:'Download report.txt'}).click()]);
+    if (download.suggestedFilename() !== 'report.txt' || await download.failure()) throw new Error('Shared file download failed');
   });
   await run('link previews: opt-in settings and cached thumbnail', {width:1280,height:860}, 'light', async page => {
     await page.goto(url + '#token=' + token);

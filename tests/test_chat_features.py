@@ -152,6 +152,88 @@ def test_reject_svg_entities():
         ImageInput(**{**IMAGE, "data": base64.b64encode(svg).decode()}).decode()
 
 
+def test_shared_file_route_is_authenticated_and_session_scoped(tmp_path):
+    settings = Settings(data=tmp_path, access_token="fixture")
+    app = create_app(settings, QueueOnly)
+    headers = {"Authorization": "Bearer fixture"}
+    with TestClient(app, headers=headers) as client:
+
+        async def seed():
+            store = app.state.store
+            sid = (await store.create_session("Files", "mock"))["id"]
+            tid = (await store.submit(sid, "share", "share"))["id"]
+            await store.execute("UPDATE turns SET status='running' WHERE id=?", (tid,))
+            media = await store.share_file(sid, tid, "test.gif", "image/gif", "digest", b"GIF89a")
+            return sid, media
+
+        sid, asset = client.portal.call(seed)
+        url = f"/media/shared/{sid}/{asset}/file"
+        assert client.get(url, headers={"Authorization": ""}).status_code == 401
+        assert client.get(f"/media/shared/other/{asset}/file").status_code == 404
+        assert client.get("/workspace/test.gif").status_code == 404
+        response = client.get(url)
+        assert response.content == b"GIF89a" and response.headers["content-type"] == "image/gif"
+        assert response.headers["content-disposition"] == "attachment"
+        assert client.get(f"/api/sessions/{sid}").json()["turns"][0]["files"] == [
+            {"id": asset, "name": "test.gif", "mime": "image/gif", "size": 6}
+        ]
+
+
+async def test_agent_file_sharing_requires_approval_and_snapshots_bytes(
+    store, tmp_path, monkeypatch
+):
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    runtime = Runtime(
+        Settings(data=tmp_path, working_directory=workspace, access_token="secret-fixture"), store
+    )
+    sid = (await store.create_session("Files", "mock"))["id"]
+    tid = (await store.submit(sid, "share", "share"))["id"]
+    await store.execute("UPDATE turns SET status='running' WHERE id=?", (tid,))
+    runtime.active[sid] = tid
+    picture = workspace / "test.gif"
+    picture.write_bytes(b"GIF89a original")
+    (workspace / "linked.gif").symlink_to(picture)
+    (workspace / "report.txt").write_text("Report")
+    (workspace / "sensitive.txt").write_text("secret-fixture")
+    tool = next(t for t in runtime.tools(sid) if t.name == "attach_file")
+
+    async def attach(path):
+        return json.loads(
+            (await tool.handler(SimpleNamespace(arguments={"path": path}))).text_result_for_llm
+        )
+
+    async def approve(allowed):
+        task = asyncio.create_task(attach("test.gif"))
+        async with asyncio.timeout(5):
+            while not (items := (await store.snapshot(sid))["approvals"]):
+                await asyncio.sleep(0.01)
+        await runtime.decide(items[0]["id"], allowed)
+        return await task
+
+    with pytest.raises(ValueError, match="declined"):
+        await approve(False)
+    assert not (await store.snapshot(sid))["turns"][0]["files"]
+    image = await approve(True)
+    assert image["name"] == "test.gif"
+
+    async def allowed(*args):
+        return True
+
+    monkeypatch.setattr(runtime, "request_approval", allowed)
+    assert (await attach("test.gif"))["id"] == image["id"]
+    await attach("report.txt")
+    for path in ("../outside", ".env", "linked.gif", "sensitive.txt"):
+        with pytest.raises(ValueError):
+            await attach(path)
+    picture.unlink()
+    saved = await store.one("SELECT content FROM shared_files WHERE id=?", (image["id"],))
+    assert saved["content"] == b"GIF89a original"
+    await store.execute("UPDATE turns SET status='done' WHERE id=?", (tid,))
+    await store.delete_session(sid)
+    assert not await store.rows("SELECT id FROM shared_files")
+
+
 async def test_named_chat_is_deduplicated_and_one_hop(store, tmp_path, monkeypatch):
     runtime = Runtime(Settings(data=tmp_path), store)
     monkeypatch.setattr(runtime, "kick", lambda sid: None)
