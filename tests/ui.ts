@@ -69,7 +69,10 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   if (path === '/api/sessions/s2') return json({session: sessions[1], turns: [], events: [], approvals: []});
   if (path.endsWith('/events')) return new Response(new ReadableStream({start(c) {
     const encode = (s:string) => new TextEncoder().encode(s); c.enqueue(encode(': open\n\n'));
-    if (path.includes('/s1/')) emitPlan = () => c.enqueue(encode('data: ' + JSON.stringify({seq:5,type:'app.plan_updated',data:{revision:2,explanation:plan.explanation,items:[{step:'Inspect',status:'completed'}]}}) + '\n\n'));
+    if (path.includes('/s1/')) emitPlan = () => {
+      plan.revision++; plan.items[0].status = 'completed';
+      c.enqueue(encode('data: ' + JSON.stringify({seq:5,type:'app.plan_updated',data:plan}) + '\n\n'));
+    };
   }}), {headers: {'Content-Type': 'text/event-stream'}});
   if (path.endsWith('/context')) return json({context: {contextInfo: {limit: 128000, totalTokens: 41200, systemTokens: 9800, toolDefinitionsTokens: 14100, conversationTokens: 17300, compactionThreshold: 102400, modelName: 'gpt-5-mini'}}, attribution: {contextAttribution: {compactions: {count: 1}}}});
   if (path.startsWith('/api/approvals/')) { approvals = []; return json({status: 'approved'}); }
@@ -89,6 +92,39 @@ async function run(name: string, viewport: {width: number, height: number}, sche
   checks.push(name);
 }
 try {
+  if (process.env.MS_DURABLE_TIMELINE_PROFILE) {
+    const fixture = Array.from({length: 400}, (_, i) => ({
+      id: 'bulk-' + i, status: 'done', prompt: 'Question ' + i, created_at: now,
+      answer: ('A paragraph with **formatting** and enough text to wrap when the window narrows. '.repeat(5) + '\n\n').repeat(4),
+    }));
+    await run('long timeline resize and return', {width:1280,height:860}, 'light', async page => {
+      let unblock!: () => void, delay = false;
+      const blocked = new Promise<void>(resolve => { unblock = resolve; });
+      await page.route('**/api/sessions/s1', async route => {
+        if (delay) await blocked;
+        await route.fulfill({json:{session:sessions[0], turns:fixture, events:[], approvals:[]}});
+      });
+      await page.goto(url + '#token=' + token);
+      await page.locator('#message-bulk-399').waitFor({state:'attached'});
+      const cdp = await page.context().newCDPSession(page); await cdp.send('Performance.enable');
+      const layout = async () => (await cdp.send('Performance.getMetrics')).metrics.find(m => m.name === 'LayoutDuration')!.value;
+      const before = await layout();
+      for (let i = 0; i < 12; i++) {
+        await page.setViewportSize({width:i % 2 ? 1280 : 850,height:860});
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      }
+      const layoutMs = (await layout() - before) * 1000;
+      await page.locator('#sessions button').getByText('Check the backup job').click();
+      await page.waitForFunction(() => document.querySelectorAll('.turn').length === 0);
+      delay = true;
+      await page.locator('#sessions button').getByText('Summarise the release notes', {exact:false}).click();
+      try {
+        const cachedBeforeResponse = await page.locator('#message-bulk-399').count() === 1;
+        console.log(JSON.stringify({turns:fixture.length, resizes:12, layoutMs, cachedBeforeResponse}));
+        if (process.env.MS_DURABLE_TIMELINE_PROFILE === 'verify' && !cachedBeforeResponse) throw new Error('Returning to a session waited on the network');
+      } finally { unblock(); }
+    });
+  } else {
   await run('desktop dark: transcript, activity, approval, context', {width: 1280, height: 860}, 'dark', async page => {
     await page.goto(url);
     await page.screenshot({path: root + '/auth.png'});
@@ -232,7 +268,7 @@ try {
     await page.locator('#plan-toggle').click(); await page.locator('#menu').click();
     await page.locator('#sessions button').nth(1).click(); await page.locator('#plan-summary').filter({hasText:'No plan yet.'}).waitFor();
     await page.locator('#menu').click(); await page.locator('#sessions button').first().click();
-    await page.locator('#plan-items').getByText('In progress').waitFor();
+    await page.locator('#plan-summary').filter({hasText:'1 of 1 completed'}).waitFor();
     await page.screenshot({path: root + '/plan-mobile.png'});
     await page.setViewportSize({width:1280,height:860});
     const dock = (await page.locator('#plan-panel').boundingBox())!, chat = (await page.locator('#chat-column').boundingBox())!, input = (await page.locator('#composer').boundingBox())!;
@@ -264,6 +300,7 @@ try {
     await page.locator('#open-settings').click(); await page.locator('#preview-enabled').uncheck();
     await page.keyboard.press('Escape'); await page.waitForFunction(() => !document.querySelector('.link-preview'));
   });
+  }
   console.log(JSON.stringify({checks, evidence: root}, null, 2));
 } finally {
   await browser.close(); server.stop(true);

@@ -45,7 +45,7 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relati
 #transcript{flex:1;overflow:auto;padding:1.5rem 1rem 1rem;overflow-anchor:none}
 .content{max-width:780px;margin:auto}
 #empty{max-width:420px;margin:18vh auto 0;text-align:center;color:var(--muted)}#empty h2{color:var(--text);font-size:1.1rem;margin-bottom:.3rem}
-.turn{margin-bottom:1.8rem}
+.turn{margin-bottom:1.8rem;content-visibility:auto;contain-intrinsic-block-size:auto 240px}
 .prompt{white-space:pre-wrap;overflow-wrap:anywhere}
 .speaker{display:block;color:var(--muted);font-size:12px;font-weight:600;margin-bottom:4px}.compact .message-meta{display:none}
 .answer{overflow-wrap:anywhere;margin-top:.8rem}
@@ -301,6 +301,7 @@ let sending = false, pending = null, sessions = [];
 const imageDrafts = new Map(), imageURLs = new Set();
 let timelineAfter = 0;
 const drafts = new Map(), turnNodes = new Map(), sessionNodes = new Map();
+const recentSessions = new Map();
 const DONE = new Set(['completed','complete','failed','error','cancelled','canceled','stopped','interrupted','succeeded','done']);
 const STATES = {queued:'Queued', running:'Working', cancelled:'Stopped', canceled:'Stopped', stopped:'Stopped', interrupted:'Interrupted by a restart · not resent', error:'Failed', failed:'Failed'};
 function node(tag, className, text) {
@@ -449,7 +450,7 @@ function renderSessions() {
     let b = sessionNodes.get(id);
     if (!b) {
       b = node('button'); b.type = 'button'; b.append(node('span'), node('small'));
-      b.onclick = () => { if (!sending) selectSession(id); };
+      b.onclick = () => { if (!sending && selected !== id) selectSession(id); };
       sessionNodes.set(id, b);
     }
     text(b.firstChild, sessionLabel(s)); text(b.lastChild, [modelName(s.model), when(s.created_at)].filter(Boolean).join(' · '));
@@ -841,14 +842,16 @@ function applyEvent(ctx, event) {
 }
 async function snapshot(ctx) {
   const data = await json('/api/sessions/' + encodeURIComponent(ctx.id), {signal:ctx.controller.signal});
-  if (context !== ctx) return;
-  ctx.turns = data.turns || []; ctx.ready = true;
+  if (context === ctx) applySnapshot(ctx, data);
+}
+function applySnapshot(ctx, data, ready = true) {
+  ctx.turns = data.turns || []; ctx.ready = ready;
   acceptPlan(ctx, data.plan);
   for (const e of data.events || []) { ctx.events.set(e.seq, e); ctx.after = Math.max(ctx.after, e.seq); }
   showSession(ctx, data.session);
   if (document.activeElement !== $('model')) $('model').value = data.session.model;
   ctx.approvalCount = (data.approvals || []).length;
-  renderSessions(); render(ctx); renderApprovals(data.approvals || []);
+  render(ctx); renderApprovals(data.approvals || []);
 }
 function scheduleSnapshot(ctx) {
   if (!ctx || ctx.timer) return;
@@ -872,7 +875,8 @@ async function stream(ctx) {
       function consumeLine() {
         if (line === '') {
           if (dataLines.length) {
-            const event = JSON.parse(dataLines.join('\n')); applyEvent(ctx, event); render(ctx);
+            const event = JSON.parse(dataLines.join('\n')); applyEvent(ctx, event);
+            if (!ctx.frame) ctx.frame = requestAnimationFrame(() => { ctx.frame = 0; render(ctx); });
             if (['app.turn_queued','app.turn_started','app.turn_settled','app.approval','app.session_renamed'].includes(event.type)) scheduleSnapshot(ctx);
             backoff = 1000;
           }
@@ -900,7 +904,14 @@ async function stream(ctx) {
   }
 }
 function detach() {
-  if (context) { context.controller.abort(); clearTimeout(context.timer); }
+  if (context) {
+    if (context.ready) {
+      recentSessions.delete(context.id);
+      recentSessions.set(context.id, {session:context.session, turns:context.turns, events:[...context.events.values()], plan:context.plan});
+      if (recentSessions.size > 4) recentSessions.delete(recentSessions.keys().next().value);
+    }
+    context.controller.abort(); clearTimeout(context.timer); cancelAnimationFrame(context.frame);
+  }
   context = null;
 }
 function openSidebar(open) {
@@ -916,14 +927,21 @@ function selectSession(id) {
   $('prompt').value = drafts.get(id || 'new') || ''; grow(); drawDraftImages(); $('slash-menu').hidden = true;
   $('turns').replaceChildren(); turnNodes.clear();
   openSidebar(false);
-  text($('title'), id ? 'Loading…' : 'New conversation'); document.title = 'Chat';
+  const row = sessions.find(s => String(s.id) === id);
+  text($('title'), id ? sessionLabel(row) : 'New conversation'); document.title = 'Chat';
   text($('context-label'), '');
   $('empty').hidden = Boolean(id); controls(); renderSessions();
-  if (id) { context = {id, controller:new AbortController(), events:new Map(), turns:[], after:0, active:false, ready:false, timer:null}; status('Connecting…', 'wait'); stream(context); }
+  if (id) {
+    const ctx = context = {id, controller:new AbortController(), events:new Map(), turns:[], after:0, active:false, ready:false, timer:null};
+    status('Connecting…', 'wait');
+    const cached = recentSessions.get(id);
+    if (cached) applySnapshot(ctx, {...cached, session:row || cached.session}, false);
+    stream(ctx);
+  }
   else { status(config ? 'Ready' : 'Disconnected', config ? 'live' : 'down'); $('prompt').focus(); }
 }
 async function connect() {
-  const gen = ++generation; bootController?.abort(); detach(); config = null; controls();
+  const gen = ++generation; bootController?.abort(); detach(); recentSessions.clear(); config = null; controls();
   const controller = bootController = new AbortController(); let backoff = 1000;
   if (!token) { $('auth').hidden = false; $('token').focus(); status('Access token required', 'down'); return; }
   while (!controller.signal.aborted) {
