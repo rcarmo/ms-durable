@@ -616,7 +616,54 @@ def test_rename_session_preserves_identity(tmp_path):
             snapshot["session"]["title"] == "New"
             and snapshot["events"][0]["type"] == "app.session_renamed"
         )
+        assert (
+            client.post(
+                path + "/title",
+                json={"title": "New", "handle": "next", "description": "  Reviews\n releases  "},
+            ).json()["description"]
+            == "Reviews releases"
+        )
+        assert (
+            client.post(path + "/title", json={"title": "Newer", "handle": "next"}).json()[
+                "description"
+            ]
+            == "Reviews releases"
+        )
+        assert (
+            client.post(
+                path + "/title", json={"title": "Newer", "handle": "next", "description": "x" * 281}
+            ).status_code
+            == 422
+        )
         assert client.get("/vendor/markdown-it.min.js").status_code == 200
+
+
+async def test_agent_sets_only_its_own_description(store, tmp_path):
+    runtime = Runtime(Settings(data=tmp_path, access_token="fixture-secret"), store)
+    own = (await store.create_session("Reviewer", "mock", "review"))["id"]
+    other = (await store.create_session("Other", "mock", "other"))["id"]
+    tools = {tool.name: tool for tool in runtime.tools(own)}
+
+    async def invoke(name, **args):
+        result = await tools[name].handler(SimpleNamespace(arguments=args))
+        return json.loads(result.text_result_for_llm)
+
+    assert "session_id" not in tools["set_session_description"].parameters["properties"]
+    data = await invoke(
+        "set_session_description", description="  Reviews\n release notes fixture-secret  "
+    )
+    assert data["id"] == own and data["description"].startswith("Reviews release notes ")
+    assert "fixture-secret" not in data["description"]
+    await invoke("set_session_description", description=data["description"])
+    sessions = {row["id"]: row for row in await invoke("list_sessions")}
+    assert (
+        sessions[other]["description"] == "" and sessions[own]["description"] == data["description"]
+    )
+    assert [row["type"] for row in await store.events(own)] == ["app.session_description_updated"]
+    with pytest.raises(ValueError, match="280 characters"):
+        await invoke("set_session_description", description="x" * 281)
+    assert (await invoke("set_session_description", description=""))["description"] == ""
+    assert (await store.snapshot(own))["session"]["description"] == ""
 
 
 async def test_session_approval_matches_request_not_call_id(store, tmp_path):

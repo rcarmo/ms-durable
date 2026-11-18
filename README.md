@@ -71,6 +71,8 @@ These tools refer only to this application's database. A stable `request_id` ded
 
 Native permission requests are shown in the UI. Read requests are approved once automatically. Other requests wait for an explicit approval or denial. Approve for this session remembers a matching request in that chat until the server restarts. Settings can disable prompts globally; that setting persists. Copilot can execute commands it classifies as safe without issuing a host permission request; for example, a plain `printf` did not require approval in the browser test. This is not an “approve every shell command” policy.
 
+An agent can use `set_session_description` to update its own short description. Descriptions appear in `list_sessions` and in the sidebar tooltip. Users can also edit them in **Rename session**. Use up to 280 characters; leave the field empty to clear it.
+
 ### Delegation
 
 Use Copilot’s native subagents for work that does not need another session’s history. Point `MS_DURABLE_AGENTS` at trusted directories containing Copilot `.agent.md` definitions to add native specialists. The SDK manages their execution.

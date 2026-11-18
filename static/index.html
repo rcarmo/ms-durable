@@ -165,7 +165,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
  .message-meta .speaker{margin:0;color:var(--text);overflow-wrap:anywhere;min-width:0}.answer-meta{margin-top:12px}
 #rename-form{display:grid;gap:8px}#rename-name{width:100%;border:1px solid var(--border);border-radius:4px;padding:6px 8px;background:var(--bg)}
 .prompt{white-space:normal}.prompt>:first-child,.answer>:first-child{margin-top:0}.prompt>:last-child,.answer>:last-child{margin-bottom:0}.prompt pre,.answer pre{white-space:pre;overflow:auto;background:var(--panel);padding:8px}.prompt table,.answer table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}.prompt :is(th,td),.answer :is(th,td){padding:4px 8px;border:1px solid var(--border)}.prompt blockquote,.answer blockquote{margin:8px 0;padding:4px 12px;background:var(--panel)}.prompt a,.answer a{color:var(--accent)}
-#rename-handle{width:100%;border:1px solid var(--border);border-radius:4px;padding:6px 8px;background:var(--bg)}.approval .actions{flex-wrap:wrap}
+#rename-handle,#rename-description{width:100%;border:1px solid var(--border);border-radius:4px;padding:6px 8px;background:var(--bg)}.approval .actions{flex-wrap:wrap}
 .tool-payload{position:relative;margin:4px 0 4px 30px;background:var(--panel)}.activity .tool-payload pre{margin:0;padding-top:38px}.tool-payload .tool-view{position:absolute;inset:4px 8px auto auto;margin:0;background:var(--panel);z-index:1}.tool-payload .icon{width:14px;height:14px}
 #slash-menu{display:flex;flex-wrap:wrap;gap:4px;padding:4px;background:var(--panel)}.inline-svg{margin:8px 0}
 .reasoning-content{margin:4px 0 8px 30px;overflow-wrap:anywhere;color:var(--muted)}
@@ -278,6 +278,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
   <header><h2 id="rename-heading">Rename session</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
   <div class="body"><form id="rename-form"><label for="rename-name">Session name</label><input id="rename-name" maxlength="100" required>
     <label for="rename-handle">Agent @name</label><input id="rename-handle" maxlength="33" required>
+    <label for="rename-description">Description</label><input id="rename-description" maxlength="280" placeholder="What this session does">
     <label><input id="delegate-enabled" type="checkbox"> Allow other agents to delegate tasks to this session</label>
     <p id="rename-summary" class="muted" role="status"></p>
     <p id="rename-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="quiet" data-close>Cancel</button><button id="rename-save" class="primary" type="submit">Save</button></div>
@@ -505,7 +506,8 @@ function renderSessions() {
     const activity = s.activity || 'idle', label = {idle:'Idle', queued:'Queued', running:'Running'}[activity];
     dot.dataset.state = activity;
     text(title, sessionLabel(s)); text(detail, [modelName(s.model), when(s.created_at)].filter(Boolean).join(' · '));
-    button.setAttribute('aria-description', label); button.title = label;
+    const description = s.description ? label + ' · ' + s.description : label;
+    button.setAttribute('aria-description', description); button.title = description;
     button.setAttribute('aria-current', String(id === selected)); button.disabled = sending || deletingSessions.has(id);
     remove.title = activity === 'idle' ? 'Delete conversation' : 'Stop or finish work before deleting';
     remove.setAttribute('aria-label', 'Delete ' + sessionLabel(s));
@@ -786,7 +788,7 @@ function markdown(el, source) {
 }
 const toolLabels = {
   plan:'Working on the plan', chat:'Sending a message', delegate_to_sessions:'Waiting for delegates', reply_chat:'Replying to a message', context:'Checking context usage', compact:'Compacting context',
-  list_models:'Listing models', list_sessions:'Listing sessions', observe_session:'Inspecting the session timeline',
+  list_models:'Listing models', list_sessions:'Listing sessions', set_session_description:'Updating the session description', observe_session:'Inspecting the session timeline',
   attach_file:'Sharing a file', read_attachment:'Reading an attachment', create_session:'Creating a session', set_model:'Changing the model',
   context_status:'Checking context usage', compact_session:'Compacting context', send_message:'Sending a message',
   bash:'Running a command', shell:'Running a command', powershell:'Running a command',
@@ -1052,7 +1054,7 @@ async function stream(ctx) {
           if (dataLines.length) {
             const event = JSON.parse(dataLines.join('\n')); applyEvent(ctx, event);
             if (!ctx.frame) ctx.frame = requestAnimationFrame(() => { ctx.frame = 0; render(ctx); });
-            if (['app.chat_reply','app.turn_queued','app.turn_started','app.turn_settled','app.file_shared','app.approval','app.session_renamed'].includes(event.type)) scheduleSnapshot(ctx);
+            if (['app.chat_reply','app.turn_queued','app.turn_started','app.turn_settled','app.file_shared','app.approval','app.session_renamed','app.session_description_updated'].includes(event.type)) scheduleSnapshot(ctx);
             backoff = 1000;
           }
           dataLines = [];
@@ -1236,6 +1238,7 @@ $('rename-session').onclick = () => {
   const field = $('rename-name'); field.value = context.session.title; text($('rename-error'), '');
   const ctx = context, dialog = $('rename-dialog');
   $('delegate-enabled').checked = Boolean(ctx.session.delegation_enabled);
+  $('rename-description').value = ctx.session.description || '';
   $('rename-handle').value = ctx.session.handle ? '@' + ctx.session.handle : '@' + (sessionName(ctx.session).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^[^a-z]+|-$|^-+/g,'').slice(0,32) || 'session');
   text($('rename-summary'), config?.summary_model ? 'Summarising recent messages with Luna…' : 'Luna is not available.');
   dialog.showModal(); field.focus(); field.select();
@@ -1254,7 +1257,7 @@ $('rename-form').onsubmit = async event => {
   if (!title) { text($('rename-error'), 'Enter a session name.'); input.focus(); return; }
   save.disabled = true; input.readOnly = true; text($('rename-error'), '');
   try {
-    const session = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/title', {method:'POST', body:{title,handle:$('rename-handle').value.trim(),delegation_enabled:$('delegate-enabled').checked}});
+    const session = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/title', {method:'POST', body:{title,handle:$('rename-handle').value.trim(),delegation_enabled:$('delegate-enabled').checked,description:$('rename-description').value.trim()}});
     if (context === ctx) { showSession(ctx, session); render(ctx); $('rename-dialog').close(); }
   } catch (e) { text($('rename-error'), e.message); }
   finally { save.disabled = false; input.readOnly = false; }

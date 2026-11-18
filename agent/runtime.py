@@ -402,8 +402,12 @@ class Runtime:
 
         async def sessions(args):
             return await self.store.rows(
-                "SELECT id,title,model,created_at,handle,delegation_enabled FROM sessions ORDER BY created_at DESC"
+                "SELECT id,title,model,created_at,handle,description,delegation_enabled FROM sessions ORDER BY created_at DESC"
             )
+
+        async def describe(args):
+            description = self.store.normalize_description(args["description"])
+            return await self.store.set_session_description(own_sid, self.redact(description))
 
         async def observe(args):
             info = await self.store.resolve_session(args.get("session_id", own_sid))
@@ -723,6 +727,13 @@ class Runtime:
                 },
                 ["action"],
                 plan,
+            ),
+            make(
+                "set_session_description",
+                "Update only this session’s short description of its role or current work, visible to users and other sessions. Maximum 280 characters; use an empty string to clear it. Do not include secrets.",
+                {"description": {"type": "string", "maxLength": 280}},
+                ["description"],
+                describe,
             ),
             make(
                 "observe_session",

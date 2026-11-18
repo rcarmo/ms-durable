@@ -146,6 +146,10 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             await self.db.execute(
                 "ALTER TABLE sessions ADD COLUMN delegation_enabled INTEGER NOT NULL DEFAULT 0"
             )
+        if "description" not in {row["name"] for row in columns}:
+            await self.db.execute(
+                "ALTER TABLE sessions ADD COLUMN description TEXT NOT NULL DEFAULT ''"
+            )
         if not await self.one("SELECT 1 FROM sqlite_schema WHERE name='turn_fts'"):
             try:
                 await self.db.executescript(TIMELINE_FTS)
@@ -201,7 +205,36 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             raise ValueError("Agent name already exists") from None
         return await self.session(sid)
 
-    async def rename_session(self, sid, title, handle, delegation_enabled=None):
+    @staticmethod
+    def normalize_description(description):
+        description = " ".join(description.split())
+        if len(description) > 280:
+            raise ValueError("Session descriptions must be at most 280 characters")
+        return description
+
+    async def set_session_description(self, sid, description):
+        description = self.normalize_description(description)
+        async with self.transaction() as db:
+            updated = await db.execute(
+                "UPDATE sessions SET description=? WHERE id=? AND description<>?",
+                (description, sid, description),
+            )
+            if updated.rowcount:
+                await db.execute(
+                    "INSERT INTO events(session_id,type,data) VALUES(?,?,?)",
+                    (
+                        sid,
+                        "app.session_description_updated",
+                        json.dumps({"description": description}),
+                    ),
+                )
+            elif not await (
+                await db.execute("SELECT 1 FROM sessions WHERE id=?", (sid,))
+            ).fetchone():
+                raise KeyError("Unknown session")
+        return {"id": sid, "description": description}
+
+    async def rename_session(self, sid, title, handle, delegation_enabled=None, description=None):
         handle = self.normalize_handle(handle)
         async with self.transaction() as db:
             cursor = await db.execute("SELECT * FROM sessions WHERE id=?", (sid,))
@@ -214,15 +247,19 @@ CREATE TABLE IF NOT EXISTS sdk_files(
                 if delegation_enabled is None
                 else int(delegation_enabled)
             )
-            if (session["title"], session["handle"], session["delegation_enabled"]) != (
-                title,
-                handle,
-                enabled,
-            ):
+            updated = {
+                "title": title,
+                "handle": handle,
+                "delegation_enabled": enabled,
+                "description": session["description"]
+                if description is None
+                else self.normalize_description(description),
+            }
+            if any(session[key] != value for key, value in updated.items()):
                 try:
                     await db.execute(
-                        "UPDATE sessions SET title=?,handle=?,delegation_enabled=? WHERE id=?",
-                        (title, handle, enabled, sid),
+                        "UPDATE sessions SET title=?,handle=?,delegation_enabled=?,description=? WHERE id=?",
+                        (*updated.values(), sid),
                     )
                 except aiosqlite.IntegrityError:
                     raise ValueError("Agent name already exists") from None
@@ -231,12 +268,10 @@ CREATE TABLE IF NOT EXISTS sdk_files(
                     (
                         sid,
                         "app.session_renamed",
-                        json.dumps(
-                            {"title": title, "handle": handle, "delegation_enabled": enabled}
-                        ),
+                        json.dumps(updated),
                     ),
                 )
-                session.update(title=title, handle=handle, delegation_enabled=enabled)
+                session.update(updated)
             return session
 
     async def cached_preview(self, url, scope):
