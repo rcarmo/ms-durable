@@ -150,9 +150,9 @@ async def test_introspection_only_app_sessions_and_model_changes(store, tmp_path
     from copilot.tools import ToolInvocation
 
     inv = ToolInvocation(
-        session_id=sid, tool_call_id="call-1", tool_name="app_list_sessions", arguments={}
+        session_id=sid, tool_call_id="call-1", tool_name="list_sessions", arguments={}
     )
-    result = await tools["app_list_sessions"].handler(inv)
+    result = await tools["list_sessions"].handler(inv)
     assert json.loads(result.text_result_for_llm)[0]["id"] == sid
     await runtime.change_model(sid, "other")
     assert (await store.session(sid))["model"] == "other"

@@ -46,19 +46,19 @@ The UI has independent conversations, streaming text, expandable tool activity, 
 
 - **Appearance:** follow the system theme or choose light or dark in Settings.
 - **Images:** attach PNG, JPEG, GIF, WebP or SVG (up to three per message, 1 MiB each). The original bytes live in SQLite and an authenticated media route serves them. The browser displays SVG in image context. Images are not added automatically to model requests. The model can inspect them on demand with the attachment tool.
-- **Tool output:** expand a tool call for pretty-printed JSON or plain text in **Readable**. Switch to **Raw** to inspect the recorded arguments, result and error. The paginated session event log is under **Settings → Diagnostics**.
+- **Tool output:** activity rows show a plain-language summary. Expand a tool call for pretty-printed JSON or plain text in **Readable**. Switch to **Raw** to inspect the recorded arguments, result and error. The paginated session event log is under **Settings → Diagnostics**.
 - **Plan:** open the checklist from the chat header. It docks to the right of chat on desktop and stacks above it on narrow screens. The agent’s changes appear live; each conversation keeps its own plan in SQLite.
 - **Message references:** use the **Copy** icon for text. Select the **Reference** icon or the timestamp to insert a reference into the composer. The composer and transcript show a short turn ID, such as `#e1b4c29a` (seven ID characters plus `a` for answer or `u` for user). Stored references retain the full chat ID, turn ID and role. Select the reference to jump to the message in the same chat. Answers written before timestamp support have no recorded completion time.
 - **Named sessions:** use the pencil in the header to rename a session without changing its ID or handle. Enter an optional unique `@name` before the first send. Names are case-insensitive. Agents can send to named sessions or raw session IDs using the application tool. The recipient sees the sender and no reply is sent back automatically.
 
 Application tools are visible to every application session:
 
-- `app_list_sessions`, `app_observe_session`: session inspection, attachment metadata and a bounded timeline page. Pass the returned `next_after` as `after_seq` for the next page.
-- `app_plan`: read (`read`), replace (`update`) or atomically edit (`patch`) the current conversation’s plan. Patches use 1-based indices and support `add`, `update` and `remove`. At most one item can be `in_progress`.
-- `app_read_attachment`: inspect a stored attachment by chat ID (or `@handle`), turn ID and ordinal. The SDK returns raster images as image results and SVG as bounded source text.
-- `app_create_session`, `app_send_message`: independent sessions and deduplicated one-hop delivery. A turn received from another agent cannot use this tool to send again.
-- `app_list_models`, `app_set_model`: model discovery and selection.
-- `app_context_status`, `app_compact_session`: native context inspection and queued compaction.
+- `list_sessions`, `observe_session`: session inspection, attachment metadata and a bounded timeline page. Pass the returned `next_after` as `after_seq` for the next page.
+- `plan`: read (`read`), replace (`update`) or atomically edit (`patch`) the current conversation’s plan. Patches use 1-based indices and support `add`, `update` and `remove`. At most one item can be `in_progress`.
+- `read_attachment`: inspect a stored attachment by chat ID (or `@handle`), turn ID and ordinal. The SDK returns raster images as image results and SVG as bounded source text.
+- `create_session`, `chat`: independent sessions and deduplicated one-hop delivery. A turn received from another agent cannot use this tool to send again.
+- `list_models`, `set_model`: model discovery and selection.
+- `context`, `compact`: native context inspection and queued compaction.
 
 These tools refer only to this application's database. They do not control Pi sessions or remote agents. A stable `request_id` deduplicates a submitted prompt or compaction request; reusing it with different content fails.
 

@@ -41,7 +41,7 @@ async def main():
         sid = (await store.create_session("Integration probe", preferred))["id"]
         turn = await runtime.enqueue(
             sid,
-            "Use the probe skill. Call app_list_sessions and Memento memory_status. Report the memory service readiness and both required markers. Do not write files or use shell commands.",
+            "Use the probe skill. Call list_sessions and Memento memory_status. Report the memory service readiness and both required markers. Do not write files or use shell commands.",
             "probe-1",
         )
         while True:
@@ -55,7 +55,7 @@ async def main():
                 print("PERMISSION", request, flush=True)
                 # Explicit probe-only grants for observation. Never approve shell/write.
                 safe = any(
-                    name in json.dumps(request) for name in ["memory_status", "app_list_sessions"]
+                    name in json.dumps(request) for name in ["memory_status", "list_sessions"]
                 )
                 await runtime.decide(item["id"], safe)
             await asyncio.sleep(0.1)

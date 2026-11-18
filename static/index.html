@@ -60,12 +60,15 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relati
 .activity{margin:8px 0;color:var(--muted)}
 .activity:empty{display:none}
 .activity details{font-size:.86rem}
-.activity summary{display:flex;align-items:center;gap:.45rem;cursor:pointer;list-style:none;color:var(--muted);padding:.15rem 0;min-width:0}
+.activity summary{display:flex;align-items:center;gap:12px;cursor:pointer;list-style:none;color:var(--muted);padding:7px 0;min-width:0;font-size:14px}
 .activity summary::-webkit-details-marker{display:none}
 .activity summary:hover{color:var(--text)}
-.activity summary::before{content:"";width:6px;height:6px;border:solid currentColor;border-width:1px 1px 0 0;transform:rotate(45deg);margin:0 4px 0 1px;flex:none}.activity details[open]>summary::before{transform:rotate(135deg)}
-.activity summary b{font-weight:500;color:var(--text);flex:none}
-.activity summary code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.activity details{position:relative}
+.activity details:not(:last-child)::after{content:"";position:absolute;inset:auto auto -5px 8px;height:10px;border-inline-start:1px solid var(--border);pointer-events:none}
+.activity-status{display:grid;place-items:center;flex:none;width:18px}.activity-status .icon{width:15px;height:15px}
+.activity-title{min-width:0;overflow-wrap:anywhere}.activity-chevron.icon{width:14px;height:14px;opacity:.8}
+.activity details[open]>summary .activity-chevron{transform:rotate(90deg)}
+.activity details>pre,.activity details>.tool-view{margin-inline-start:30px}
 .activity pre{background:var(--panel);padding:8px 12px;margin:4px 0;max-height:40vh;overflow:auto}
 .activity .ok{color:var(--ok)}.activity .bad{color:var(--danger)}.activity .wait{color:var(--warn)}
 .spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spin{animation:none}}
@@ -156,6 +159,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol>
 <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
 <symbol id="i-reference" viewBox="0 0 24 24"><path d="M10 14l4-4m-6 7-1 1a3.5 3.5 0 0 1-5-5l4-4a3.5 3.5 0 0 1 5 0m5-2 1-1a3.5 3.5 0 0 1 5 5l-4 4a3.5 3.5 0 0 1-5 0" transform="translate(1 1) scale(.92)"/></symbol>
+<symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
 <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></symbol>
 <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
 <symbol id="i-x-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></symbol>
@@ -564,20 +568,28 @@ function markdown(el, source) {
   el.md = source;
   el.innerHTML = renderer.render(source);
 }
-function toolSummary(args) {
-  if (args == null) return '';
-  if (typeof args !== 'object') return String(args);
-  for (const key of ['command', 'fullCommandText', 'path', 'file_path', 'filePath', 'url', 'query', 'pattern', 'prompt']) if (typeof args[key] === 'string') return args[key];
-  const first = Object.values(args).find(v => typeof v === 'string');
-  return first || '';
-}
-function toolIcon(name) {
-  const n = String(name).toLowerCase();
-  if (/bash|shell|powershell|command/.test(n)) return 'terminal';
-  if (/edit|write|create|view|read|file|glob|grep/.test(n)) return 'file';
-  if (/fetch|web|url/.test(n)) return 'globe';
-  if (n.includes('-') || n.includes('mcp')) return 'plug';
-  return 'tool';
+const toolLabels = {
+  plan:'Working on the plan', chat:'Sending a message', context:'Checking context usage', compact:'Compacting context',
+  list_models:'Listing models', list_sessions:'Listing sessions', observe_session:'Inspecting the session timeline',
+  read_attachment:'Reading an attachment', create_session:'Creating a session', set_model:'Changing the model',
+  context_status:'Checking context usage', compact_session:'Compacting context', send_message:'Sending a message',
+  bash:'Running a command', shell:'Running a command', powershell:'Running a command',
+  view:'Reading a file', read:'Reading a file', read_file:'Reading a file', edit:'Editing a file',
+  write:'Writing a file', create:'Creating a file', apply_patch:'Applying changes',
+  glob:'Finding files', grep:'Searching files', web_fetch:'Opening a web page', web_search:'Searching the web',
+};
+function toolSummary(tool, name) {
+  const args = parse(tool.arguments) || {};
+  const key = name.replace(/^app_/, '').toLowerCase();
+  const label = Object.hasOwn(toolLabels, key) ? toolLabels[key] : name.replace(/[_-]+/g, ' ').replace(/^./, c => c.toUpperCase());
+  const hint = [tool.toolTitle, tool.tool_title, args.description, args.intention].find(value =>
+    typeof value === 'string' && value.trim() && value.trim().toLowerCase() !== name.toLowerCase());
+  const target = ({plan: {read:'Reviewing the plan', update:'Updating the plan', patch:'Updating the plan'} })[key]?.[args.action];
+  if (typeof target === 'string') return target;
+  if (hint) return hint.trim().replace(/\s+/g,' ').slice(0,200);
+  const subject = (key === 'set_model' ? args.model : key === 'chat' ? args.session_id : key === 'create_session' ? args.title
+    : /read|edit|write|create|view/.test(key) ? args.path || args.filePath || args.file_path || args.fileName : null);
+  return label + (typeof subject === 'string' && subject.trim() ? ' · ' + subject.trim().replace(/\s+/g,' ').slice(0,120) : '');
 }
 function highlightTool(pre, body) {
   pre.classList.add('tool-syntax'); pre.replaceChildren();
@@ -601,11 +613,12 @@ function formatTool(value) {
   if (parsed && typeof parsed === 'object') return format(parsed);
   return format(value);
 }
-function entry(view, key, iconName, iconClass, title, subject, body, raw) {
+function entry(view, key, iconClass, title, body, raw) {
   let d = view.entries.get(key);
   if (!d) {
     d = node('details'); const s = node('summary');
-    s.append(icon(iconName), node('b'), node('code'), icon('loader'));
+    const status = node('span','activity-status'); status.append(icon('loader'), node('span','sr'));
+    s.append(status, node('span','activity-title'), icon('chevron','activity-chevron'));
     d.append(s);
     if (raw !== undefined) {
       const modes = node('div','tool-view'); modes.setAttribute('role','group'); modes.setAttribute('aria-label','Tool output format');
@@ -618,9 +631,10 @@ function entry(view, key, iconName, iconClass, title, subject, body, raw) {
     }
     d.append(node('pre')); view.entries.set(key, d); view.activity.append(d);
   }
-  const [lead, b, code, tail] = d.firstChild.children;
-  setIcon(lead, iconName); text(b, title); text(code, subject);
-  if (iconClass === 'running') setIcon(tail, 'loader', 'spin'); else if (iconClass === 'wait') setIcon(tail, 'shield', 'wait'); else if (iconClass === 'bad') setIcon(tail, 'x-circle', 'bad'); else if (iconClass === 'ok') setIcon(tail, 'check', 'ok'); else tail.setAttribute('class', 'icon sr');
+  const [status, label] = d.firstChild.children;
+  const states = {running:['loader','Running','spin'], wait:['shield','Waiting for approval','wait'], bad:['x-circle','Failed or interrupted','bad'], ok:['check','Completed','']};
+  const [glyph, statusText, style] = states[iconClass] || ['check','Completed',''];
+  setIcon(status.firstChild, glyph, style); text(status.lastChild, statusText); text(label, title);
   if (raw === undefined) text(d.lastChild, body);
   else if (d.readable !== body || d.rawOutput !== raw) { d.readable = body; d.rawOutput = raw; drawTool(d); }
 }
@@ -668,12 +682,12 @@ function render(ctx) {
           tools.set(key, {...old, ...d, complete: e.type === 'tool.execution_complete' || old.complete});
         }
       }
-      if (thoughts) entry(v, 'thoughts', 'thought', active && !draft && !tools.size ? 'running' : '', 'Reasoning', '', thoughts);
+      if (thoughts) entry(v, 'thoughts', active && !draft && !tools.size ? 'running' : 'ok', 'Thinking through the request', thoughts);
       for (const [key, tool] of tools) {
         const name = tool.toolName || tool.tool_name || 'Tool';
         const outcome = !tool.complete ? (active ? (ctx.approvalCount ? 'wait' : 'running') : 'bad') : (tool.success === false ? 'bad' : 'ok');
         const result = tool.result?.content ?? tool.result ?? tool.error ?? '';
-        entry(v, 'tool:' + key, toolIcon(name), outcome, name, toolSummary(tool.arguments), 'Arguments\n' + formatTool(tool.arguments ?? {}) + (tool.complete ? '\n\nResult\n' + formatTool(result) : ''), JSON.stringify({arguments: tool.arguments, result: tool.result, error: tool.error}));
+        entry(v, 'tool:' + key, outcome, toolSummary(tool, name), 'Arguments\n' + formatTool(tool.arguments ?? {}) + (tool.complete ? '\n\nResult\n' + formatTool(result) : ''), JSON.stringify({tool: name, arguments: tool.arguments, result: tool.result, error: tool.error}));
       }
       v.answerMeta.hidden = !turn.answer && !draft;
       const waiting = active && !turn.answer && !draft, working = waiting && status !== 'queued' && !v.entries.size;

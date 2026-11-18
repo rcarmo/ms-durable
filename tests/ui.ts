@@ -23,7 +23,7 @@ const turns: any[] = [
   {id: 't3', kind: 'turn', prompt: 'Write a short summary to summary.md. [[message:s1:t1:answer]]', sender_id:'s2', sender_handle:'build', status: 'running', answer: '', created_at: now - 30},
 ];
 const events = [
-  {seq: 1, turn_id: 't1', type: 'tool.execution_start', data: {toolCallId: 'a', toolName: 'bash', arguments: {command: 'ls -1'}}},
+  {seq: 1, turn_id: 't1', type: 'tool.execution_start', data: {toolCallId: 'a', toolName: 'bash', arguments: {command: 'ls -1', description:'Checking which files are present'}}},
   {seq: 2, turn_id: 't1', type: 'tool.execution_complete', data: {toolCallId: 'a', success: true, result: {content: '{"files":["AGENTS.md","notes.txt"],"ok":true}'}}},
   {seq: 3, turn_id: 't3', type: 'assistant.reasoning_delta', data: {deltaContent: 'I should write the file with the edit tool.'}},
   {seq: 4, turn_id: 't3', type: 'tool.execution_start', data: {toolCallId: 'b', toolName: 'create', arguments: {path: 'summary.md'}}},
@@ -89,6 +89,9 @@ try {
     await page.locator('.answer code').filter({hasText: 'AGENTS.md'}).waitFor();
     if ((await page.locator('.answer').first().textContent())!.includes('`')) throw new Error('inline code delimiters rendered');
     if (await page.locator('.answer.working').count()) throw new Error('redundant Working indicator beside activity');
+    await page.locator('.activity-title').getByText('Checking which files are present',{exact:true}).waitFor();
+    await page.locator('.activity-title').getByText('Creating a file · summary.md',{exact:true}).waitFor();
+    if (await page.locator('.activity summary').filter({hasText:'ls -1'}).count()) throw new Error('Raw command leaked into collapsed summary');
     if (await page.locator('.activity .spin').count() !== 0 || await page.locator('.activity .wait').count() !== 1) throw new Error('expected one approval-pending indicator and no spinners');
     for (const selector of ['.activity','#notice','.approval','.approval code','.prompt']) {
       const rail = await page.locator(selector).first().evaluate(el => getComputedStyle(el).borderLeftWidth);
@@ -118,7 +121,7 @@ try {
     if (!(await pre.textContent())?.includes('\n  "files": [')) throw new Error('Result JSON was not pretty-printed');
     await output.getByRole('button',{name:'Raw',exact:true}).click();
     const raw = JSON.parse((await pre.textContent())!);
-    if (raw.arguments.command !== 'ls -1' || raw.result.content !== events[1].data.result?.content) throw new Error('Raw payload changed');
+    if (raw.tool !== 'bash' || raw.arguments.command !== 'ls -1' || raw.result.content !== events[1].data.result?.content) throw new Error('Raw payload changed');
     await output.getByRole('button',{name:'Readable',exact:true}).click();
     await pre.locator('.key').filter({hasText:'files'}).waitFor();
     await page.locator('#context-button').click();

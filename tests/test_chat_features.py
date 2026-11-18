@@ -93,7 +93,7 @@ async def test_named_chat_is_deduplicated_and_one_hop(store, tmp_path, monkeypat
     bob = (await store.create_session("Build", "mock", "bob"))["id"]
 
     async def send(sender, target):
-        tool = next(t for t in runtime.tools(sender) if t.name == "app_send_message")
+        tool = next(t for t in runtime.tools(sender) if t.name == "chat")
         result = await tool.handler(
             SimpleNamespace(
                 arguments={
@@ -135,27 +135,27 @@ async def test_model_can_inspect_timeline_and_attachments(store, tmp_path):
         return await tools[name].handler(SimpleNamespace(arguments=args))
 
     first = json.loads(
-        (await invoke("app_observe_session", session_id="@review")).text_result_for_llm
+        (await invoke("observe_session", session_id="@review")).text_result_for_llm
     )
     assert len(first["events"]) == 100
     assert [a["name"] for a in first["turns"][0]["images"]] == ["diagram.svg", "test.png"]
     tail = json.loads(
-        (await invoke("app_observe_session", after_seq=first["next_after"])).text_result_for_llm
+        (await invoke("observe_session", after_seq=first["next_after"])).text_result_for_llm
     )
     assert len(tail["events"]) == 2 and tail["next_after"] is None
-    result = await invoke("app_read_attachment", turn_id=turn["id"], ordinal=0)
+    result = await invoke("read_attachment", turn_id=turn["id"], ordinal=0)
     assert json.loads(result.text_result_for_llm)["source"].encode() == SVG
-    result = await invoke("app_read_attachment", turn_id=turn["id"], ordinal=1)
+    result = await invoke("read_attachment", turn_id=turn["id"], ordinal=1)
     assert base64.b64decode(result.binary_results_for_llm[0].data) == pixels
     with pytest.raises(ValueError, match="Unknown attachment"):
-        await invoke("app_read_attachment", session_id=other, turn_id=turn["id"], ordinal=0)
+        await invoke("read_attachment", session_id=other, turn_id=turn["id"], ordinal=0)
 
 
 async def test_agent_plan_is_atomic_and_session_scoped(store, tmp_path):
     runtime = Runtime(Settings(data=tmp_path), store)
     sid = (await store.create_session("Review", "mock"))["id"]
     other = (await store.create_session("Other", "mock"))["id"]
-    tool = next(t for t in runtime.tools(sid) if t.name == "app_plan")
+    tool = next(t for t in runtime.tools(sid) if t.name == "plan")
 
     async def call(**args):
         return json.loads((await tool.handler(SimpleNamespace(arguments=args))).text_result_for_llm)

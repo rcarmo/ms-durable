@@ -356,35 +356,35 @@ class Runtime:
         plan_status = {"type": "string", "enum": ["pending", "in_progress", "completed"]}
         return [
             make(
-                "app_context_status",
+                "context",
                 "Read native token/context and compaction metadata for an app session.",
                 {"session_id": string},
                 [],
                 metadata,
             ),
             make(
-                "app_compact_session",
+                "compact",
                 "Queue native Copilot compaction at the next session boundary; stable request_id deduplicates retries.",
                 {"session_id": string, "instructions": string, "request_id": string},
                 ["request_id"],
                 compact,
             ),
             make(
-                "app_list_models",
+                "list_models",
                 "List Copilot and configured Foundry/BYOK model selections.",
                 {},
                 [],
                 lambda args: self.available_models(),
             ),
             make(
-                "app_list_sessions",
+                "list_sessions",
                 "List sessions/agents in this application database.",
                 {},
                 [],
                 sessions,
             ),
             make(
-                "app_plan",
+                "plan",
                 "Manage the current conversation’s Plan sidebar. Read the checklist, replace it with update, "
                 "or apply a batch of add/update/remove patches in order. Indexes are 1-based; add without "
                 "an index appends. Mark at most one step in_progress. Keep the plan current as work proceeds.",
@@ -422,14 +422,14 @@ class Runtime:
                 plan,
             ),
             make(
-                "app_observe_session",
+                "observe_session",
                 "Inspect a session by ID or @handle; returns recent turns, attachment metadata and a page of timeline events.",
                 {"session_id": string, "after_seq": {"type": "integer"}},
                 [],
                 observe,
             ),
             make(
-                "app_read_attachment",
+                "read_attachment",
                 "Inspect one stored chat image by turn ID and ordinal. SVG is returned as source; raster images use SDK image results.",
                 {
                     "session_id": string,
@@ -440,21 +440,21 @@ class Runtime:
                 attachment,
             ),
             make(
-                "app_create_session",
+                "create_session",
                 "Create an independent agent session in this application.",
                 {"title": string, "model": string, "handle": string},
                 [],
                 create,
             ),
             make(
-                "app_send_message",
+                "chat",
                 "Queue a one-hop message by session ID or @handle; reuse request_id for retries. Agent-delivered turns cannot send messages.",
                 {"session_id": string, "prompt": string, "request_id": string},
                 ["session_id", "prompt", "request_id"],
                 send,
             ),
             make(
-                "app_set_model",
+                "set_model",
                 "Set this or another app session model for its next queued turn.",
                 {"session_id": string, "model": string},
                 ["model"],
@@ -561,7 +561,7 @@ class Runtime:
                         name: {"action": stable_session_context}
                         for name in ["environment_context", "runtime_instructions"]
                     },
-                    "content": "You are the agent in MS Durable. Use app_* tools to inspect and manage sessions in this application only. Do not access host credential files. Model changes take effect on the next turn. Tool permission denials must be respected. Discover and follow AGENTS.md and relevant skills through the native harness.",
+                    "content": "You are the agent in MS Durable. Use the host tools to inspect and manage sessions in this application only. Do not access host credential files. Model changes take effect on the next turn. Tool permission denials must be respected. Discover and follow AGENTS.md and relevant skills through the native harness.",
                 },
             )
             transcript_exists = await self.store.one(
