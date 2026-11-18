@@ -34,6 +34,7 @@ let approvals = [pendingApproval];
 let linkPreviews = {enabled:false,any_domain:false};
 const plan = {revision:1, explanation:'Release checklist', items:[{step:'Inspect',status:'in_progress'}]};
 let emitPlan = () => {}, emitChat = () => {};
+let timelineListener: ((emit: (event: unknown) => void) => void) | null = null;
 const calls: string[] = [];
 const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async fetch(request) {
   const url = new URL(request.url), path = url.pathname;
@@ -75,6 +76,7 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   if (path === '/api/sessions/s2') return json({session: sessions[1], turns: [], events: [], approvals: []});
   if (path.endsWith('/events')) return new Response(new ReadableStream({start(c) {
     const encode = (s:string) => new TextEncoder().encode(s); c.enqueue(encode(': open\n\n'));
+    if (path.includes('/s1/')) timelineListener?.(event => c.enqueue(encode('data: ' + JSON.stringify(event) + '\n\n')));
     if (path.includes('/s1/')) emitChat = () => c.enqueue(encode('data: ' + JSON.stringify({seq:9001, turn_id:'t1', type:'app.chat_sent',data:{destination:'@build',message:'Check the build.'}}) + '\n\n'));
     if (path.includes('/s1/')) emitPlan = () => {
       plan.revision++; plan.items[0].status = 'completed';
@@ -352,6 +354,39 @@ try {
     });
     const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button',{name:'Download report.txt'}).click()]);
     if (download.suggestedFilename() !== 'report.txt' || await download.failure()) throw new Error('Shared file download failed');
+  });
+  await run('timeline follows latest without interrupting scrollback', {width:1024,height:660}, 'light', async page => {
+    const history = Array.from({length:35}, (_, i) => ({id:'scroll-' + i, status:'done', prompt:'Question ' + i, answer:'An earlier answer.'}));
+    const live = (id: string, seq: number) => ({seq,type:'turn.updated',data:{id,status:'done',prompt:'New message',answer:'New answer'}});
+    let emit!: (event: unknown) => void;
+    await page.route('**/api/sessions/s1', route => route.fulfill({json:{session:sessions[0],turns:history,events:[],approvals:[]}}));
+    // Use the fixture stream to exercise the same live render path as production.
+    timelineListener = listener => { emit = listener; };
+    try {
+      await page.goto(url + '#token=' + token);
+      await page.locator('#connection[data-state=live]').waitFor();
+      const atEnd = () => page.waitForFunction(() => {
+        const el = document.getElementById('transcript')!;
+        return el.scrollTop > 0 && el.scrollHeight - el.scrollTop - el.clientHeight <= 4;
+      });
+      await atEnd();
+      emit(live('live-1', 100));
+      await page.locator('#message-live-1').waitFor({state:'attached'}); await atEnd();
+      const transcript = page.locator('#transcript');
+      await transcript.evaluate(el => { el.scrollTop = 500; });
+      await page.locator('#jump').waitFor();
+      emit(live('live-2', 101));
+      await page.locator('#message-live-2').waitFor({state:'attached'});
+      if (await transcript.evaluate(el => Math.abs(el.scrollTop - 500) > 2)) throw new Error('Live update interrupted scrollback');
+      await page.locator('#jump').click(); await atEnd();
+      await page.setViewportSize({width:1024,height:580}); await atEnd();
+      await transcript.evaluate(el => { el.scrollTop = 0; });
+      await page.locator('#jump').waitFor();
+      await page.locator('#sessions .session-select').nth(1).click();
+      await page.locator('#connection[data-state=live]').waitFor();
+      await page.locator('#sessions .session-select').first().click();
+      await page.locator('#message-scroll-34').waitFor({state:'attached'}); await atEnd();
+    } finally { timelineListener = null; }
   });
   await run('link previews: opt-in settings and cached thumbnail', {width:1280,height:860}, 'light', async page => {
     await page.goto(url + '#token=' + token);

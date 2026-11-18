@@ -366,8 +366,13 @@ function format(value) { return typeof value === 'string' ? value : JSON.stringi
 function parse(value) { if (typeof value !== 'string') return value; try { return JSON.parse(value); } catch { return value; } }
 function notice(message = '') { text($('notice').querySelector('p'), message); $('notice').hidden = !message; }
 function status(message, state) { text($('connection'), message); $('connection').dataset.state = state; }
-function nearBottom() { const el = $('transcript'); return el.scrollHeight - el.scrollTop - el.clientHeight < 120; }
-function bottom() { $('transcript').scrollTop = $('transcript').scrollHeight; $('jump').hidden = true; }
+function nearBottom() { const el = $('transcript'); return el.scrollHeight - el.scrollTop - el.clientHeight <= 4; }
+function bottom() {
+  const el = $('transcript');
+  if (context) context.followLatest = true;
+  el.scrollTop = el.scrollHeight;
+  $('jump').hidden = true;
+}
 function when(seconds) {
   if (!seconds) return '';
   const d = new Date(seconds * 1000), now = new Date();
@@ -860,7 +865,7 @@ function renderCompaction(v, turn, active) {
 }
 function render(ctx) {
   if (context !== ctx) return;
-  const follow = nearBottom(), scrollTop = $('transcript').scrollTop;
+  const scrollTop = ctx.followLatest ? null : $('transcript').scrollTop;
   const keep = new Set(), eventsByTurn = new Map();
   for (const event of [...ctx.events.values()].sort((a,b) => a.seq - b.seq)) {
     const key = String(event.turn_id); if (!eventsByTurn.has(key)) eventsByTurn.set(key, []); eventsByTurn.get(key).push(event);
@@ -932,7 +937,8 @@ function render(ctx) {
   if (ctx.settled !== undefined && settled > ctx.settled && ctx.contextLoaded) loadContext(ctx);
   ctx.settled = settled;
   controls();
-  if (follow) bottom(); else { $('transcript').scrollTop = scrollTop; $('jump').hidden = false; }
+  if (ctx.followLatest) bottom();
+  else { $('transcript').scrollTop = scrollTop; $('jump').hidden = false; }
 }
 function setPlanOpen(open, returnFocus = false) {
   $('plan-panel').hidden = !open; $('plan-toggle').setAttribute('aria-expanded', String(open));
@@ -1113,14 +1119,14 @@ function selectSession(id) {
   drawPlan(); if (!id) setPlanOpen(false);
   $('approvals').replaceChildren(); $('approvals').dataset.ids = '';
   $('prompt').value = drafts.get(id || 'new') || ''; grow(); drawDraftImages(); $('slash-menu').hidden = true;
-  $('turns').replaceChildren(); turnNodes.clear();
+  $('turns').replaceChildren(); turnNodes.clear(); $('jump').hidden = true;
   if (narrowSidebar.matches) openSidebar(false);
   const row = sessions.find(s => String(s.id) === id);
   text($('title'), id ? sessionLabel(row) : 'New conversation'); document.title = 'Chat';
   text($('context-label'), '');
   $('empty').hidden = Boolean(id); controls(); renderSessions();
   if (id) {
-    const ctx = context = {id, controller:new AbortController(), events:new Map(), turns:[], after:0, active:false, ready:false, timer:null};
+    const ctx = context = {id, controller:new AbortController(), events:new Map(), turns:[], after:0, active:false, ready:false, timer:null, followLatest:true};
     status('Connecting…', 'wait');
     const cached = recentSessions.get(id);
     if (cached) applySnapshot(ctx, {...cached, session:row || cached.session}, false);
@@ -1275,7 +1281,17 @@ $('menu').onclick = () => {
 $('sidebar-close').onclick = $('scrim').onclick = closeSidebar;
 $('new').onclick = () => { if (!sending) selectSession(null); };
 $('jump').onclick = bottom;
-$('transcript').addEventListener('scroll', () => { if (nearBottom()) $('jump').hidden = true; }, {passive:true});
+$('transcript').addEventListener('scroll', () => {
+  if (!context?.turns.length) return;
+  context.followLatest = nearBottom();
+  $('jump').hidden = context.followLatest;
+}, {passive:true});
+// Images, wrapping and composer resizing can change layout without a chat event.
+const transcriptResize = new ResizeObserver(() => {
+  if (context?.turns.length && context.followLatest) bottom();
+});
+transcriptResize.observe($('turns'));
+transcriptResize.observe($('transcript'));
 const slashCommands = {'/new': 'new', '/plan': 'plan-toggle', '/context': 'context-button', '/rename': 'rename-session', '/settings': 'open-settings'};
 function runSlash(command) {
   const button = $(slashCommands[command]); if (!button || button.hidden || button.disabled) return false;
