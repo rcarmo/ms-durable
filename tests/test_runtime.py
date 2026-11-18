@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from ms_durable.config import Settings
-from ms_durable.runtime import Runtime
+from agent.config import Settings
+from agent.runtime import Runtime
 
 
 class FakeSession:

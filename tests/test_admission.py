@@ -1,7 +1,7 @@
 import asyncio
 
-from ms_durable.config import Settings
-from ms_durable.runtime import Runtime
+from agent.config import Settings
+from agent.runtime import Runtime
 
 
 async def test_abort_during_submit_cancels_late_commit(store, tmp_path, monkeypatch):

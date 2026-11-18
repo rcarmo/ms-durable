@@ -5,9 +5,9 @@ import json
 import os
 from pathlib import Path
 
-from ms_durable.config import Settings
-from ms_durable.runtime import Runtime
-from ms_durable.store import Store
+from agent.config import Settings
+from agent.runtime import Runtime
+from agent.store import Store
 
 
 async def main():

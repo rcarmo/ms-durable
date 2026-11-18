@@ -3,11 +3,13 @@
 import base64
 import binascii
 import hashlib
+import io
 import os
 import stat
 from pathlib import Path
 from xml.etree import ElementTree
 
+from PIL import Image
 from pydantic import BaseModel, Field
 
 MAX_IMAGE = 1024 * 1024
@@ -21,7 +23,26 @@ RASTER = {
 }
 
 
-MAX_SHARED = 10 * 1024 * 1024
+MAX_SHARED = 50 * 1024 * 1024
+SHARED_CHUNK = 256 * 1024
+
+
+def byte_range(value, size):
+    """Return inclusive offsets for a single HTTP byte range."""
+    import re
+
+    match = re.fullmatch(r"bytes=([0-9]{0,20})-([0-9]{0,20})", value)
+    if not match or size == 0:
+        raise ValueError("Unsatisfiable range")
+    first, last = match.groups()
+    if not first:
+        if not last or int(last) == 0:
+            raise ValueError("Unsatisfiable range")
+        return max(0, size - int(last)), size - 1
+    start, end = int(first), min(size - 1, int(last)) if last else size - 1
+    if start > end:
+        raise ValueError("Unsatisfiable range")
+    return start, end
 
 
 def workspace_file(root, name, protected):
@@ -44,16 +65,29 @@ def workspace_file(root, name, protected):
             fd = child
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_SHARED:
-            raise ValueError("Share a regular file of at most 10 MiB (no hard links)")
+            raise ValueError("Share a regular file of at most 50 MiB (no hard links)")
         with os.fdopen(os.dup(fd), "rb") as file:
             content = file.read(MAX_SHARED + 1)
         if len(content) > MAX_SHARED:
-            raise ValueError("Shared files must be at most 10 MiB")
+            raise ValueError("Shared files must be at most 50 MiB")
     finally:
         os.close(fd)
-    mime = next(
-        (mime for mime, matches in RASTER.items() if matches(content)), "application/octet-stream"
-    )
+    mime = "application/octet-stream"
+    if len(content) <= MAX_IMAGE:
+        raster = next((mime for mime, matches in RASTER.items() if matches(content)), None)
+        if raster:
+            try:
+                with Image.open(
+                    io.BytesIO(content), formats=("PNG", "JPEG", "GIF", "WEBP")
+                ) as image:
+                    if (
+                        image.width <= 4096
+                        and image.height <= 4096
+                        and image.width * image.height <= 8_000_000
+                    ):
+                        mime = raster
+            except (OSError, ValueError, Image.DecompressionBombError):
+                pass  # Keep the original downloadable; never decode an invalid preview.
     return path, mime, hashlib.sha256(content).hexdigest(), content
 
 

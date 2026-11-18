@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from ms_durable.providers import Providers
+from agent.providers import Providers
 
 
 def test_native_foundry_mapping_and_no_catalogue_secrets(tmp_path, monkeypatch):
@@ -55,7 +55,7 @@ def test_missing_foundry_secret_fails_closed(tmp_path):
 
 
 async def test_workspace_adapter_protects_ancestor_operations(store, tmp_path):
-    from ms_durable.session_fs import SQLiteSessionFS
+    from agent.session_fs import SQLiteSessionFS
 
     root = tmp_path / "workspace"
     state = root / "state"

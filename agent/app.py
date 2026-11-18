@@ -4,19 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import hmac
 import http.client
 import json
 import os
 import secrets
+import sqlite3
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from .config import Settings
-from .media import MAX_BODY, MAX_IMAGES, ImageInput
+from .media import MAX_BODY, MAX_IMAGES, SHARED_CHUNK, ImageInput, byte_range
 from .previews import preview, thumbnail
 from .runtime import Runtime
 from .store import Store
@@ -316,16 +321,102 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
             raise HTTPException(404, "Unknown media")
         return media_response(item)
 
-    @app.get("/media/shared/{sid}/{asset}/file", dependencies=[Depends(auth)])
-    async def shared_media(sid: str, asset: str):
-        item = await app.state.store.one(
-            "SELECT mime,content FROM shared_files JOIN turns ON turns.id=shared_files.turn_id "
-            "WHERE turns.session_id=? AND shared_files.id=?",
-            (sid, asset),
-        )
-        if item is None:
+    download_key = secrets.token_bytes(32)
+    shared_lookup = (
+        "SELECT shared_files.rowid, name, mime, length(content), digest FROM shared_files "
+        "JOIN turns ON turns.id=shared_files.turn_id WHERE turns.session_id=? AND shared_files.id=?"
+    )
+
+    def download_signature(path, expires):
+        return hmac.digest(download_key, f"{path}\n{expires}".encode(), "sha256").hex()
+
+    @app.post("/media/shared/{sid}/{asset}/file", dependencies=[Depends(auth)])
+    async def authorize_download(sid: str, asset: str, request: Request):
+        if not await app.state.store.one(shared_lookup, (sid, asset)):
             raise HTTPException(404, "Unknown media")
-        return media_response(item)
+        path = request.url.path
+        expires = str(int(time.time()) + 300)
+        response = Response(status_code=204)
+        response.set_cookie(
+            "ms_shared",
+            expires + "." + download_signature(path, expires),
+            max_age=300,
+            path=path,
+            httponly=True,
+            samesite="strict",
+            secure=request.url.scheme == "https",
+        )
+        return response
+
+    @app.api_route("/media/shared/{sid}/{asset}/file", methods=["GET", "HEAD"])
+    async def shared_media(sid: str, asset: str, request: Request):
+        ticket = request.cookies.get("ms_shared", "")
+        expires, _, signature = ticket.partition(".")
+        if not (
+            len(expires) <= 12
+            and expires.isascii()
+            and expires.isdecimal()
+            and int(expires) >= int(time.time())
+            and signature.isascii()
+            and hmac.compare_digest(signature, download_signature(request.url.path, expires))
+        ):
+            await auth(request.headers.get("authorization", ""))
+
+        # Open the BLOB in the same read snapshot as its metadata so deletion
+        # cannot change a response in progress. Never load the entire BLOB.
+        db = sqlite3.connect(app.state.store.path, check_same_thread=False)
+        blob = None
+        try:
+            db.execute("BEGIN")
+            item = db.execute(shared_lookup, (sid, asset)).fetchone()
+            if item is None:
+                raise HTTPException(404, "Unknown media")
+            rowid, name, mime, size, digest = item
+            etag = '"' + digest + '"'
+            headers = {
+                "Accept-Ranges": "bytes",
+                "ETag": etag,
+                "Content-Security-Policy": "default-src 'none'; sandbox",
+                "Content-Disposition": "attachment; filename*=UTF-8''" + quote(name, safe=""),
+            }
+            start, end, status = 0, size - 1, 200
+            if (
+                request.method == "GET"
+                and "range" in request.headers
+                and request.headers.get("if-range", etag) == etag
+            ):
+                try:
+                    start, end = byte_range(request.headers["range"], size)
+                except ValueError:
+                    return Response(
+                        status_code=416, headers={**headers, "Content-Range": f"bytes */{size}"}
+                    )
+                status = 206
+                headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+            length = end - start + 1
+            headers["Content-Length"] = str(length)
+            if request.method == "HEAD" or not length:
+                return Response(status_code=status, media_type=mime, headers=headers)
+            blob = db.blobopen("shared_files", "content", rowid, readonly=True)
+            blob.seek(start)
+        finally:
+            if blob is None:
+                db.close()
+
+        async def chunks():
+            remaining = length
+            try:
+                while remaining:
+                    chunk = await run_in_threadpool(blob.read, min(remaining, SHARED_CHUNK))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+            finally:
+                blob.close()
+                db.close()
+
+        return StreamingResponse(chunks(), status_code=status, media_type=mime, headers=headers)
 
     def media_response(item):
         return Response(

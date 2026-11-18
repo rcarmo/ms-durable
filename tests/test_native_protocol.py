@@ -14,8 +14,8 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
-from ms_durable.config import Settings
-from ms_durable.runtime import Runtime
+from agent.config import Settings
+from agent.runtime import Runtime
 
 pytestmark = pytest.mark.skipif(
     os.getenv("MS_DURABLE_NATIVE_TESTS") != "1", reason="opt-in real Copilot runtime"

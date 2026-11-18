@@ -6,11 +6,11 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from ms_durable.app import create_app
-from ms_durable.config import Settings
-from ms_durable.runtime import Runtime
-from ms_durable.session_fs import SQLiteSessionFS
-from ms_durable.store import Store
+from agent.app import create_app
+from agent.config import Settings
+from agent.runtime import Runtime
+from agent.session_fs import SQLiteSessionFS
+from agent.store import Store
 
 
 @pytest.fixture

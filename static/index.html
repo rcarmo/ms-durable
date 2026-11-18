@@ -414,7 +414,6 @@ function describeRequest(r) {
   if (kind === 'write') return ['file', 'Write a file', r.fileName || r.path || (r.possiblePaths || []).join(', '), r.intention];
   if (kind === 'url') return ['globe', 'Open a URL', r.url || '', r.intention];
   if (kind === 'mcp') return ['plug', 'Use an MCP tool', [r.serverName, r.toolTitle || r.toolName].filter(Boolean).join(' · '), r.intention];
-  if (kind === 'share_file') return ['file', 'Share a file in this conversation', r.path, r.intention];
   if (kind === 'custom-tool') return ['tool', 'Use an app tool', r.toolName || '', r.toolDescription];
   return ['shield', 'Allow ' + kind, r.toolName || '', r.intention];
 }
@@ -432,7 +431,6 @@ function renderApprovals(items) {
     const raw = node('details'); raw.append(node('summary', '', 'Request details'), node('pre', '', format(request))); card.append(raw);
     const actions = node('div', 'actions');
     for (const [label, allow, remember] of [['Deny', false, false], ['Approve once', true, false], ['Approve for this session', true, true]]) {
-      if (remember && request.kind === 'share_file') continue;
       const button = node('button', 'quiet'); button.type = 'button';
       text(button, label);
       button.onclick = async () => {
@@ -714,7 +712,7 @@ function showSharedFiles(view, turn, ctx) {
   for (const file of files) {
     const url = '/media/shared/' + encodeURIComponent(ctx.id) + '/' + encodeURIComponent(file.id) + '/file';
     const card = node('div', 'shared-file');
-    if (['image/png','image/jpeg','image/gif','image/webp'].includes(file.mime)) {
+    if (file.size <= 1024 * 1024 && ['image/png','image/jpeg','image/gif','image/webp'].includes(file.mime)) {
       const img = node('img'); img.alt = file.name; card.append(img);
       loadChatImage(img, url, ctx);
     }
@@ -723,11 +721,10 @@ function showSharedFiles(view, turn, ctx) {
     download.onclick = async () => {
       download.disabled = true;
       try {
-        const blob = await (await api(url, {signal:ctx.controller.signal})).blob();
+        await api(url, {method:'POST', signal:ctx.controller.signal});
         if (context !== ctx) return;
-        const href = URL.createObjectURL(blob), a = node('a');
-        a.href = href; a.download = file.name; document.body.append(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(href), 1000);
+        const a = node('a');
+        a.href = url; a.download = file.name; document.body.append(a); a.click(); a.remove();
       } catch (error) { if (context === ctx) notice(error.message); }
       finally { download.disabled = false; }
     };

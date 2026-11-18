@@ -4,7 +4,7 @@ version = "0.1.0"
 license = {file = "LICENSE"}
 description = "A small asyncio/FastAPI UI for the Microsoft Copilot harness"
 requires-python = ">=3.11"
-dependencies = ["microsoft-copilot-sdk==2.0.1", "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "aiosqlite>=0.20,<1"]
+dependencies = ["microsoft-copilot-sdk==2.0.1", "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "aiosqlite>=0.20,<1", "pillow==13.0.0"]
 
 [project.optional-dependencies]
 azure = ["azure-identity>=1.19,<2"]
@@ -19,4 +19,4 @@ testpaths = ["tests"]
 line-length = 100
 
 [tool.setuptools.packages.find]
-include = ["ms_durable*"]
+include = ["agent*"]

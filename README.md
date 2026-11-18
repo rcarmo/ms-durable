@@ -61,7 +61,7 @@ Application tools are visible to every application session:
 - `list_sessions`, `observe_session`: session inspection, attachment metadata and a bounded timeline page. Pass the returned `next_after` as `after_seq` for the next page.
 - `plan`: read (`read`), replace (`update`) or atomically edit (`patch`) the current conversation’s plan. Patches use 1-based indices and support `add`, `update` and `remove`. At most one item can be `in_progress`.
 - `read_attachment`: inspect a stored attachment by chat ID (or `@handle`), turn ID and ordinal. The SDK returns raster images as image results and SVG as bounded source text.
-- `attach_file`: share a workspace file on the current turn after one-time approval. PNG, JPEG, GIF and WebP appear inline; other files are download-only. The app stores a copy in SQLite and serves it from an authenticated `/media/shared/` route. Each turn can share up to five files of at most 10 MiB each.
+- `attach_file`: share a workspace file on the current turn without an approval prompt. Each turn can share up to five files of at most 50 MiB each. PNG, JPEG, GIF and WebP can appear inline when they are at most 1 MiB, 4096 pixels per side and 8 megapixels. The app stores the original in SQLite. The authenticated `/media/shared/` route streams downloads and supports single HTTP byte ranges.
 - `create_session`, `chat`: independent sessions and deduplicated one-hop delivery. A turn received from another agent cannot use this tool to send again, because I remember Bedlam 3.
 - `list_models`, `set_model`: model discovery and selection.
 - `context`, `compact`: native context inspection and queued compaction.

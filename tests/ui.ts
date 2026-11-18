@@ -39,6 +39,10 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   const url = new URL(request.url), path = url.pathname;
   if (path === '/vendor/markdown-it.min.js') return new Response(Bun.file(resolve(import.meta.dir, '../static/vendor/markdown-it.min.js')), {headers:{'Content-Type':'text/javascript'}});
   if (path === '/') return new Response(html, {headers: {'Content-Type': 'text/html'}});
+  const reportPath = '/media/shared/s1/test-report/file';
+  if (path === reportPath && request.method === 'GET' && request.headers.get('cookie')?.includes('fixture_download=ok') && !request.headers.has('authorization')) {
+    return new Response('Report', {headers:{'Content-Type':'application/octet-stream', 'Content-Disposition':'attachment; filename="report.txt"'}});
+  }
   if (request.headers.get('authorization') !== 'Bearer ' + token) return new Response('{}', {status: 401});
   calls.push(request.method + ' ' + path);
   const json = (value: unknown) => Response.json(value);
@@ -58,7 +62,7 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   if (path === '/media/s1/t1/0') return new Response(svg, {headers:{'Content-Type':'image/svg+xml'}});
   if (path === '/media/s1/t1/1') return new Response(png, {headers:{'Content-Type':'image/png'}});
   if (path === '/media/shared/s1/test-gif/file') return new Response(Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'), {headers:{'Content-Type':'image/gif'}});
-  if (path === '/media/shared/s1/test-report/file') return new Response('Report', {headers:{'Content-Type':'application/octet-stream'}});
+  if (path === reportPath && request.method === 'POST') return new Response(null, {status:204, headers:{'Set-Cookie':'fixture_download=ok; HttpOnly; SameSite=Strict; Path=' + reportPath}});
   if (path === '/api/sessions/s1/timeline') return json(url.searchParams.get('after') === '0' ? {events:events.slice(0,2),next_after:2} : {events:events.slice(2),next_after:null});
   if (path === '/api/sessions/s1/turns' && request.method === 'POST') {
     const body = await request.json() as any;
@@ -327,10 +331,12 @@ try {
   });
   await run('agent attachments: GIF preview and authenticated download', {width:1024,height:768}, 'light', async page => {
     await page.route('**/api/sessions/s1', route => route.fulfill({json:{session:sessions[0], turns:[{...turns[0], files:[
-      {id:'test-gif', name:'demo.gif', mime:'image/gif'}, {id:'test-report', name:'report.txt', mime:'application/octet-stream'},
+      {id:'test-gif', name:'demo.gif', mime:'image/gif', size:42}, {id:'test-report', name:'report.txt', mime:'application/octet-stream', size:6},
+      {id:'large-gif', name:'large.gif', mime:'image/gif', size:2*1024*1024},
     ]}], events:[], approvals:[]}}));
     await page.goto(url + '#token=' + token);
     await page.waitForFunction(() => document.querySelector<HTMLImageElement>('.shared-file img[alt="demo.gif"]')?.naturalWidth === 1);
+    if (await page.locator('.shared-file img[alt="large.gif"]').count()) throw new Error('Large shared image rendered inline');
     const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button',{name:'Download report.txt'}).click()]);
     if (download.suggestedFilename() !== 'report.txt' || await download.failure()) throw new Error('Shared file download failed');
   });

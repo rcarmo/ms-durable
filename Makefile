@@ -49,6 +49,6 @@ lock:
 	$(VENV)/bin/pip freeze --exclude-editable > requirements.lock
 check: lint test
 run:
-	$(PY) -m ms_durable
+	$(PY) -m agent
 clean:
 	@echo 'Disposable outputs: $(PROJECT_TMP). Persistent state in ./data is never cleaned.'

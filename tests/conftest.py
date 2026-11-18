@@ -1,6 +1,6 @@
 import pytest
 
-from ms_durable.store import Store
+from agent.store import Store
 
 
 @pytest.fixture

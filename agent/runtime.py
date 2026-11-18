@@ -286,7 +286,7 @@ class Runtime:
         return self.models
 
     def tools(self, own_sid):
-        def make(name, description, properties, required, fn):
+        def make(name, description, properties, required, fn, *, skip_permission=False):
             async def handle(invocation):
                 result = await fn(invocation.arguments)
                 if isinstance(result, ToolResult):
@@ -306,6 +306,7 @@ class Runtime:
                     "additionalProperties": False,
                 },
                 handler=handle,
+                skip_permission=skip_permission,
             )
 
         async def attach(args):
@@ -328,15 +329,6 @@ class Runtime:
                 raise ValueError("Share a non-hidden file inside the workspace")
             if self.redact(str(path)) != str(path):
                 raise ValueError("The path contains a server credential and cannot be shared")
-            if not await self.request_approval(
-                own_sid,
-                {
-                    "kind": "share_file",
-                    "path": self.redact(str(path)),
-                    "intention": "Copy this file into the conversation for viewing or download.",
-                },
-            ):
-                raise ValueError("File sharing was declined")
             protected = [
                 Path(p).resolve()
                 for p in (
@@ -578,15 +570,16 @@ class Runtime:
             ),
             make(
                 "attach_file",
-                "Share a generated workspace file in this conversation. The user must approve. Use this when asked to attach, show or share a file; do not paste absolute paths or bytes as a substitute.",
+                "Share a generated workspace file in this conversation without an approval prompt. Use this when asked to attach, show or share a file; do not paste absolute paths or bytes as a substitute.",
                 {
                     "path": {
                         "type": "string",
-                        "description": "Path to a regular file in the configured workspace (max 10 MiB).",
+                        "description": "Path to a regular file in the configured workspace (max 50 MiB).",
                     }
                 },
                 ["path"],
                 attach,
+                skip_permission=True,
             ),
             make(
                 "create_session",

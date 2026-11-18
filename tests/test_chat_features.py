@@ -6,10 +6,10 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from ms_durable.app import create_app
-from ms_durable.config import Settings
-from ms_durable.media import MAX_BODY, ImageInput
-from ms_durable.runtime import Runtime
+from agent.app import create_app
+from agent.config import Settings
+from agent.media import MAX_BODY, MAX_SHARED, ImageInput
+from agent.runtime import Runtime
 
 SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>'
 IMAGE = {"name": "diagram.svg", "mime": "image/svg+xml", "data": base64.b64encode(SVG).decode()}
@@ -164,6 +164,10 @@ def test_shared_file_route_is_authenticated_and_session_scoped(tmp_path):
             tid = (await store.submit(sid, "share", "share"))["id"]
             await store.execute("UPDATE turns SET status='running' WHERE id=?", (tid,))
             media = await store.share_file(sid, tid, "test.gif", "image/gif", "digest", b"GIF89a")
+            await store.execute(
+                "INSERT INTO shared_files VALUES(?,?,?,'application/octet-stream','video-digest',zeroblob(?))",
+                ("video-fixture", tid, "demo.mp4", MAX_SHARED),
+            )
             return sid, media
 
         sid, asset = client.portal.call(seed)
@@ -173,15 +177,53 @@ def test_shared_file_route_is_authenticated_and_session_scoped(tmp_path):
         assert client.get("/workspace/test.gif").status_code == 404
         response = client.get(url)
         assert response.content == b"GIF89a" and response.headers["content-type"] == "image/gif"
-        assert response.headers["content-disposition"] == "attachment"
+        assert response.headers["content-disposition"] == "attachment; filename*=UTF-8''test.gif"
+        assert client.head(url).headers["content-length"] == "6"
+        etag = response.headers["etag"]
+        partial = client.get(url, headers={"Range": "bytes=1-3", "If-Range": etag})
+        assert (partial.status_code, partial.headers["content-range"], partial.content) == (
+            206,
+            "bytes 1-3/6",
+            b"IF8",
+        )
+        assert client.get(url, headers={"Range": "bytes=-2"}).content == b"9a"
+        assert client.get(url, headers={"Range": "bytes=2-"}).content == b"F89a"
+        assert (
+            client.get(url, headers={"Range": "bytes=6-"}).headers["content-range"] == "bytes */6"
+        )
+        assert client.get(url, headers={"Range": "bytes=0-1,4-5"}).status_code == 416
+        assert (
+            client.get(url, headers={"Range": "bytes=2-", "If-Range": '"stale"'}).status_code == 200
+        )
+        assert client.post(url, headers={"Authorization": ""}).status_code == 401
+        assert client.post(url).status_code == 204
+        assert client.get(url, headers={"Authorization": "", "Range": "bytes=3-"}).content == b"89a"
+        assert (
+            client.get(
+                f"/media/shared/other/{asset}/file", headers={"Authorization": ""}
+            ).status_code
+            == 401
+        )
         assert client.get(f"/api/sessions/{sid}").json()["turns"][0]["files"] == [
-            {"id": asset, "name": "test.gif", "mime": "image/gif", "size": 6}
+            {"id": asset, "name": "test.gif", "mime": "image/gif", "size": 6},
+            {
+                "id": "video-fixture",
+                "name": "demo.mp4",
+                "mime": "application/octet-stream",
+                "size": MAX_SHARED,
+            },
         ]
+        video = f"/media/shared/{sid}/video-fixture/file"
+        assert client.head(video).headers["content-length"] == str(MAX_SHARED)
+        n = 300_000  # Cross a streaming chunk boundary near the end of the video.
+        tail = client.get(video, headers={"Range": f"bytes={MAX_SHARED - n}-"})
+        assert tail.status_code == 206 and tail.content == bytes(n)
+        assert (
+            tail.headers["content-range"] == f"bytes {MAX_SHARED - n}-{MAX_SHARED - 1}/{MAX_SHARED}"
+        )
 
 
-async def test_agent_file_sharing_requires_approval_and_snapshots_bytes(
-    store, tmp_path, monkeypatch
-):
+async def test_agent_file_sharing_without_approval_snapshots_bytes(store, tmp_path):
     workspace = tmp_path / "work"
     workspace.mkdir()
     runtime = Runtime(
@@ -192,7 +234,9 @@ async def test_agent_file_sharing_requires_approval_and_snapshots_bytes(
     await store.execute("UPDATE turns SET status='running' WHERE id=?", (tid,))
     runtime.active[sid] = tid
     picture = workspace / "test.gif"
-    picture.write_bytes(b"GIF89a original")
+    gif = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
+    picture.write_bytes(gif)
+    (workspace / "wide.gif").write_bytes(gif[:6] + (5000).to_bytes(2, "little") + gif[8:])
     (workspace / "linked.gif").symlink_to(picture)
     (workspace / "report.txt").write_text("Report")
     (workspace / "sensitive.txt").write_text("secret-fixture")
@@ -203,32 +247,28 @@ async def test_agent_file_sharing_requires_approval_and_snapshots_bytes(
             (await tool.handler(SimpleNamespace(arguments={"path": path}))).text_result_for_llm
         )
 
-    async def approve(allowed):
-        task = asyncio.create_task(attach("test.gif"))
-        async with asyncio.timeout(5):
-            while not (items := (await store.snapshot(sid))["approvals"]):
-                await asyncio.sleep(0.01)
-        await runtime.decide(items[0]["id"], allowed)
-        return await task
-
-    with pytest.raises(ValueError, match="declined"):
-        await approve(False)
-    assert not (await store.snapshot(sid))["turns"][0]["files"]
-    image = await approve(True)
+    assert tool.skip_permission is True
+    assert all(not t.skip_permission for t in runtime.tools(sid) if t.name != "attach_file")
+    image = await asyncio.wait_for(attach("test.gif"), 2)
+    assert not (await store.snapshot(sid))["approvals"]
     assert image["name"] == "test.gif"
-
-    async def allowed(*args):
-        return True
-
-    monkeypatch.setattr(runtime, "request_approval", allowed)
+    with (workspace / "too-large.mp4").open("wb") as file:
+        file.truncate(MAX_SHARED + 1)
     assert (await attach("test.gif"))["id"] == image["id"]
     await attach("report.txt")
-    for path in ("../outside", ".env", "linked.gif", "sensitive.txt"):
+    await attach("wide.gif")
+    files = {f["name"]: f["mime"] for f in (await store.snapshot(sid))["turns"][0]["files"]}
+    assert files == {
+        "test.gif": "image/gif",
+        "report.txt": "application/octet-stream",
+        "wide.gif": "application/octet-stream",
+    }
+    for path in ("../outside", ".env", "linked.gif", "sensitive.txt", "too-large.mp4"):
         with pytest.raises(ValueError):
             await attach(path)
     picture.unlink()
     saved = await store.one("SELECT content FROM shared_files WHERE id=?", (image["id"],))
-    assert saved["content"] == b"GIF89a original"
+    assert saved["content"] == gif
     await store.execute("UPDATE turns SET status='done' WHERE id=?", (tid,))
     await store.delete_session(sid)
     assert not await store.rows("SELECT id FROM shared_files")
@@ -335,7 +375,7 @@ async def test_agent_plan_is_atomic_and_session_scoped(store, tmp_path):
         first,
         second,
     ]
-    from ms_durable.store import Store
+    from agent.store import Store
 
     reopened = Store(store.path)
     await reopened.open()
@@ -423,8 +463,8 @@ def test_preview_policy_cache_and_thumbnail_expiry(tmp_path, monkeypatch):
         calls.append((url, domains, any_domain))
         return {"title": "Example", "image": "https://example.com/image.png"}
 
-    monkeypatch.setattr("ms_durable.app.preview", metadata)
-    monkeypatch.setattr("ms_durable.app.thumbnail", lambda *_: ("image/png", b"fixture-bytes"))
+    monkeypatch.setattr("agent.app.preview", metadata)
+    monkeypatch.setattr("agent.app.thumbnail", lambda *_: ("image/png", b"fixture-bytes"))
     settings = Settings(data=tmp_path, access_token="fixture")
     headers = {"Authorization": "Bearer fixture"}
     prefs = "/api/settings/link-previews"
@@ -460,12 +500,12 @@ def test_preview_policy_cache_and_thumbnail_expiry(tmp_path, monkeypatch):
 
 
 def test_external_preview_rejects_nonpublic_and_unlisted_hosts(monkeypatch):
-    from ms_durable.previews import preview
+    from agent.previews import preview
 
     def resolve(*args, **kwargs):
         return [(None, None, None, None, ("192.168.1.1", 443))]
 
-    monkeypatch.setattr("ms_durable.previews.socket.getaddrinfo", resolve)
+    monkeypatch.setattr("agent.previews.socket.getaddrinfo", resolve)
     with pytest.raises(ValueError, match="not public"):
         preview("https://example.com/", set(), True)
     with pytest.raises(ValueError, match="not enabled"):
