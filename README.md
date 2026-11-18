@@ -99,9 +99,6 @@ Authentication options in a provider profile:
 | `scope` | Optional Entra scope; defaults to `https://cognitiveservices.azure.com/.default` |
 
 Entra uses the normal Azure Identity credential chain, including configured service-principal, managed-identity or Azure CLI credentials. The callback obtains a token for each native request; Azure Identity handles token caching. Static bearer tokens do not refresh automatically. Environment-variable names, profiles and endpoints are server configuration, not browser input.
-
-No live Foundry endpoint or Entra tenant has been tested. Local protocol tests use synthetic credentials and the real Copilot executable; a separate mocked-credential test checks the Entra scope, callback and cleanup.
-
 ## MCP and skills
 
 The MCP file accepts `mcpServers` or `servers`. HTTP bearer credentials can reference a server environment variable:
