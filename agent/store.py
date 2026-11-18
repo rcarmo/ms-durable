@@ -12,6 +12,58 @@ from pathlib import Path
 
 import aiosqlite
 
+# External-content FTS stores postings, not a second copy of the timeline.
+# Index final answers once, rather than indexing every streaming fragment.
+TIMELINE_FTS = """
+BEGIN IMMEDIATE;
+CREATE VIEW timeline_event_text AS
+ SELECT seq, session_id, type, substr(data,1,32768) AS body FROM events
+ WHERE type NOT IN ('assistant.message_delta','assistant.reasoning_delta','assistant.message','user.message');
+CREATE TABLE timeline_turn_keys (docid INTEGER PRIMARY KEY, turn_id TEXT NOT NULL UNIQUE);
+INSERT INTO timeline_turn_keys(turn_id) SELECT id FROM turns;
+CREATE VIEW timeline_turn_text AS
+ SELECT k.docid,t.session_id,t.prompt,t.answer,t.error
+ FROM timeline_turn_keys k JOIN turns t ON t.id=k.turn_id;
+CREATE VIRTUAL TABLE turn_fts USING fts5(
+ session_id, prompt, answer, error, content='timeline_turn_text', content_rowid='docid',
+ tokenize='unicode61 remove_diacritics 2');
+CREATE VIRTUAL TABLE event_fts USING fts5(
+ session_id, type, body, content='timeline_event_text', content_rowid='seq',
+ tokenize='unicode61 remove_diacritics 2');
+CREATE TRIGGER turn_fts_insert AFTER INSERT ON turns BEGIN
+ INSERT INTO timeline_turn_keys(turn_id) VALUES(new.id);
+ INSERT INTO turn_fts(rowid,session_id,prompt,answer,error)
+ VALUES(last_insert_rowid(),new.session_id,new.prompt,new.answer,new.error);
+END;
+CREATE TRIGGER turn_fts_delete AFTER DELETE ON turns BEGIN
+ INSERT INTO turn_fts(turn_fts,rowid,session_id,prompt,answer,error)
+ SELECT 'delete',docid,old.session_id,old.prompt,old.answer,old.error
+ FROM timeline_turn_keys WHERE turn_id=old.id;
+ DELETE FROM timeline_turn_keys WHERE turn_id=old.id;
+END;
+CREATE TRIGGER turn_fts_update AFTER UPDATE OF session_id,prompt,answer,error ON turns
+ WHEN old.session_id IS NOT new.session_id OR old.prompt IS NOT new.prompt
+   OR old.answer IS NOT new.answer OR old.error IS NOT new.error BEGIN
+ INSERT INTO turn_fts(turn_fts,rowid,session_id,prompt,answer,error)
+ SELECT 'delete',docid,old.session_id,old.prompt,old.answer,old.error
+ FROM timeline_turn_keys WHERE turn_id=old.id;
+ INSERT INTO turn_fts(rowid,session_id,prompt,answer,error)
+ SELECT docid,new.session_id,new.prompt,new.answer,new.error
+ FROM timeline_turn_keys WHERE turn_id=new.id;
+END;
+CREATE TRIGGER event_fts_insert AFTER INSERT ON events BEGIN
+ INSERT INTO event_fts(rowid,session_id,type,body)
+ SELECT seq,session_id,type,body FROM timeline_event_text WHERE seq=new.seq;
+END;
+CREATE TRIGGER event_fts_delete BEFORE DELETE ON events BEGIN
+ INSERT INTO event_fts(event_fts,rowid,session_id,type,body)
+ SELECT 'delete',seq,session_id,type,body FROM timeline_event_text WHERE seq=old.seq;
+END;
+INSERT INTO turn_fts(turn_fts) VALUES('rebuild');
+INSERT INTO event_fts(event_fts) VALUES('rebuild');
+COMMIT;
+"""
+
 
 def uid() -> str:
     return str(uuid.uuid4())
@@ -44,6 +96,7 @@ CREATE TABLE IF NOT EXISTS events(
  turn_id TEXT, sdk_id TEXT, type TEXT NOT NULL, data TEXT NOT NULL,
  UNIQUE(session_id,sdk_id));
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);
+CREATE INDEX IF NOT EXISTS turns_session_recent ON turns(session_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS pending_turns ON turns(session_id,status) WHERE status IN ('queued','running');
 CREATE TABLE IF NOT EXISTS approvals(
  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, turn_id TEXT,
@@ -84,6 +137,12 @@ CREATE TABLE IF NOT EXISTS sdk_files(
         await self.db.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS session_handle ON sessions(handle)"
         )
+        if not await self.one("SELECT 1 FROM sqlite_schema WHERE name='turn_fts'"):
+            try:
+                await self.db.executescript(TIMELINE_FTS)
+            except BaseException:
+                await self.db.rollback()
+                raise
         # Never re-send an ambiguous admitted prompt or replay an unknown external effect.
         await self.db.execute(
             "UPDATE turns SET status='interrupted',error='Server stopped during this turn; inspect history before continuing.' WHERE status='running'"
@@ -339,6 +398,50 @@ CREATE TABLE IF NOT EXISTS sdk_files(
                 (sid, tid, "app.plan_updated", data),
             )
             return value
+
+    async def search_timeline(self, sid, query, limit=10):
+        if not isinstance(query, str) or not query.strip() or len(query) > 256 or "\0" in query:
+            raise ValueError("Enter search text of 1–256 characters")
+        if type(limit) is not int or not 1 <= limit <= 20:
+            raise ValueError("Search limit must be between 1 and 20")
+
+        # Compile literal words/phrases, never arbitrary MATCH syntax from a tool call.
+        def quoted(text):
+            return '"' + text.replace('"', '""') + '"'
+
+        terms = " AND ".join(quoted(word) for word in query.split())
+        scope = "session_id : " + quoted(sid) + " AND "
+        async with self.lock:
+            turns = await self.db.execute_fetchall(
+                """
+                SELECT t.id AS turn_id,t.created_at,t.status,
+                    snippet(turn_fts,1,'','',' … ',20) AS prompt,
+                    snippet(turn_fts,2,'','',' … ',20) AS answer,
+                    snippet(turn_fts,3,'','',' … ',12) AS error
+                FROM turn_fts JOIN timeline_turn_keys k ON k.docid=turn_fts.rowid
+                JOIN turns t ON t.id=k.turn_id
+                WHERE turn_fts MATCH ? AND t.session_id=?
+                ORDER BY bm25(turn_fts,0,1.4,1,0.8), t.created_at DESC, t.id LIMIT ?
+            """,
+                (scope + "{prompt answer error} : (" + terms + ")", sid, limit),
+            )
+            events = await self.db.execute_fetchall(
+                """
+                SELECT e.seq,e.turn_id,e.type,snippet(event_fts,2,'','',' … ',24) AS excerpt
+                FROM event_fts JOIN events e ON e.seq=event_fts.rowid
+                WHERE event_fts MATCH ? AND e.session_id=?
+                ORDER BY bm25(event_fts,0,1,1), e.seq DESC LIMIT ?
+            """,
+                (scope + "{type body} : (" + terms + ")", sid, limit),
+            )
+
+        def bounded(rows):
+            return [
+                {k: v[:640] if isinstance(v, str) else v for k, v in dict(row).items()}
+                for row in rows
+            ]
+
+        return {"turn_matches": bounded(turns), "event_matches": bounded(events)}
 
     async def share_file(self, sid, tid, name, mime, digest, content):
         async with self.transaction() as db:

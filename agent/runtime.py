@@ -395,6 +395,11 @@ class Runtime:
         async def observe(args):
             info = await self.store.resolve_session(args.get("session_id", own_sid))
             sid = info["id"]
+            if "query" in args:
+                return {
+                    "session": info,
+                    **await self.store.search_timeline(sid, args["query"], args.get("limit", 10)),
+                }
             turns = await self.store.rows(
                 "SELECT * FROM turns WHERE session_id=? ORDER BY created_at DESC LIMIT 20", (sid,)
             )
@@ -552,8 +557,22 @@ class Runtime:
             ),
             make(
                 "observe_session",
-                "Inspect a session by ID or @handle; returns recent turns, attachment metadata and a page of timeline events.",
-                {"session_id": string, "after_seq": {"type": "integer"}},
+                "Inspect a session by ID or @handle (defaults to the current session). Supply query to search historical prompts, answers, errors and non-streaming events by words using ranked full-text search. Without query, returns recent turns, attachments and a page of timeline events.",
+                {
+                    "session_id": string,
+                    "after_seq": {"type": "integer"},
+                    "query": {
+                        "type": "string",
+                        "maxLength": 256,
+                        "description": "Literal search words; all must match.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "description": "Maximum matches per result group; defaults to 10.",
+                    },
+                },
                 [],
                 observe,
             ),

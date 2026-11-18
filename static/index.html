@@ -140,7 +140,8 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 #attachments{display:flex;flex-wrap:wrap;gap:4px;padding:4px}
 #attachments button{max-width:100%;overflow-wrap:anywhere;font-size:12px}
 .message-images{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
-.message-images img{display:block;max-width:min(100%,360px);max-height:300px;object-fit:contain}
+#turns :is(.message-images img,.inline-svg,.link-preview img,.shared-file img){display:block;width:auto;height:auto;max-width:min(100%,var(--image-width,100%));max-height:min(var(--image-height,300px),60vh);max-height:min(var(--image-height,300px),60dvh);object-fit:contain}
+.message-images img{--image-width:360px}
 .message-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px;color:var(--muted);font-size:12px;margin:2px 0}
 .message-meta button{padding:3px 5px}.message-meta .icon{width:16px;height:16px}.message-time{color:inherit}
 .message-ref{font-size:12px;overflow-wrap:anywhere;color:var(--accent)}
@@ -166,13 +167,13 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 .prompt{white-space:normal}.prompt>:first-child,.answer>:first-child{margin-top:0}.prompt>:last-child,.answer>:last-child{margin-bottom:0}.prompt pre,.answer pre{white-space:pre;overflow:auto;background:var(--panel);padding:8px}.prompt table,.answer table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}.prompt :is(th,td),.answer :is(th,td){padding:4px 8px;border:1px solid var(--border)}.prompt blockquote,.answer blockquote{margin:8px 0;padding:4px 12px;background:var(--panel)}.prompt a,.answer a{color:var(--accent)}
 #rename-handle{width:100%;border:1px solid var(--border);border-radius:4px;padding:6px 8px;background:var(--bg)}.approval .actions{flex-wrap:wrap}
 .tool-payload{position:relative;margin:4px 0 4px 30px;background:var(--panel)}.activity .tool-payload pre{margin:0;padding-top:38px}.tool-payload .tool-view{position:absolute;inset:4px 8px auto auto;margin:0;background:var(--panel);z-index:1}.tool-payload .icon{width:14px;height:14px}
-#slash-menu{display:flex;flex-wrap:wrap;gap:4px;padding:4px;background:var(--panel)}.inline-svg{display:block;max-width:100%;max-height:300px;margin:8px 0}
+#slash-menu{display:flex;flex-wrap:wrap;gap:4px;padding:4px;background:var(--panel)}.inline-svg{margin:8px 0}
 .reasoning-content{margin:4px 0 8px 30px;overflow-wrap:anywhere;color:var(--muted)}
 .link-preview:not(:empty){border:1px solid var(--border);border-radius:4px;padding:8px 12px;margin:6px 0;overflow-wrap:anywhere}.link-preview p{margin:4px 0 0}
-.link-preview img{max-width:100%;max-height:160px;display:block;margin-bottom:6px;object-fit:contain}
+.link-preview img{--image-height:160px;margin-bottom:6px}
 .shared-files:not(:empty){display:flex;flex-wrap:wrap;gap:.5rem;margin:.5rem 0}
 .shared-file{min-width:0;max-width:100%;border:1px solid var(--border);border-radius:4px;padding:.5rem}
-.shared-file img{display:block;max-width:100%;max-height:360px;object-fit:contain;margin-bottom:.5rem}
+.shared-file img{--image-height:360px;margin-bottom:.5rem}
 .shared-file button{max-width:100%;overflow-wrap:anywhere;text-align:start}
 </style>
 </head>

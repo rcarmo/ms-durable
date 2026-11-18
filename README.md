@@ -58,7 +58,7 @@ The UI has independent conversations, streaming text, expandable tool activity, 
 
 Application tools are visible to every application session:
 
-- `list_sessions`, `observe_session`: session inspection, attachment metadata and a bounded timeline page. Pass the returned `next_after` as `after_seq` for the next page.
+- `list_sessions`, `observe_session`: session inspection, attachment metadata and a bounded timeline page. Pass `next_after` as `after_seq` for the next page. To search older history, call `observe_session` with `query` (for example `backup checksum`) and optionally `session_id` or `limit`. SQLite FTS5 returns ranked excerpts with turn IDs and event sequence numbers. All search words must match. Prompts, final answers, errors and non-streaming event text are searchable; streaming fragments and attachment bytes are excluded. Existing timelines are indexed on first startup.
 - `plan`: read (`read`), replace (`update`) or atomically edit (`patch`) the current conversation’s plan. Patches use 1-based indices and support `add`, `update` and `remove`. At most one item can be `in_progress`.
 - `read_attachment`: inspect a stored attachment by chat ID (or `@handle`), turn ID and ordinal. The SDK returns raster images as image results and SVG as bounded source text.
 - `attach_file`: share a workspace file on the current turn without an approval prompt. Each turn can share up to five files of at most 50 MiB each. PNG, JPEG, GIF and WebP can appear inline when they are at most 1 MiB, 4096 pixels per side and 8 megapixels. The app stores the original in SQLite. The authenticated `/media/shared/` route streams downloads and supports single HTTP byte ranges.

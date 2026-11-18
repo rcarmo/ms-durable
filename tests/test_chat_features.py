@@ -274,6 +274,70 @@ async def test_agent_file_sharing_without_approval_snapshots_bytes(store, tmp_pa
     assert not await store.rows("SELECT id FROM shared_files")
 
 
+async def test_timeline_fts_backfill_updates_and_session_scope(tmp_path):
+    import sqlite3
+
+    from agent.store import Store
+
+    path = tmp_path / "old.sqlite"
+    with sqlite3.connect(path) as old:
+        old.executescript("""
+            CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,model TEXT NOT NULL,
+                created_at REAL NOT NULL,initialized INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE turns(id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),
+                request_id TEXT NOT NULL,prompt TEXT NOT NULL,status TEXT NOT NULL,
+                answer TEXT NOT NULL DEFAULT '',error TEXT,created_at REAL NOT NULL, UNIQUE(session_id,request_id));
+            CREATE TABLE events(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL,
+                turn_id TEXT,sdk_id TEXT,type TEXT NOT NULL,data TEXT NOT NULL,UNIQUE(session_id,sdk_id));
+            INSERT INTO sessions VALUES('old','Legacy','mock',1,0);
+            INSERT INTO turns VALUES('turn-old','old','req','Café backup','done','old answer',NULL,1);
+            INSERT INTO events(session_id,turn_id,type,data) VALUES
+                ('old','turn-old','tool.execution_complete','{"result":"backup checksum"}'),
+                ('old','turn-old','assistant.message_delta','{"deltaContent":"fragmentonly"}');
+        """)
+    old.close()
+    store = Store(path)
+    await store.open()
+    try:
+        assert (await store.search_timeline("old", "cafe backup"))["turn_matches"][0][
+            "turn_id"
+        ] == "turn-old"
+        assert (await store.search_timeline("old", "checksum"))["event_matches"][0]["seq"] == 1
+        assert not (await store.search_timeline("old", "fragmentonly"))["event_matches"]
+        assert not (await store.search_timeline("old", '" OR *'))["event_matches"]
+        await store.execute("UPDATE turns SET answer=? WHERE id=?", ("fresh answer", "turn-old"))
+        assert not (await store.search_timeline("old", "old answer"))["turn_matches"]
+        assert (await store.search_timeline("old", "fresh"))["turn_matches"]
+        other = (await store.create_session("Other", "mock", "other"))["id"]
+        own = await store.submit(other, "backup elsewhere", "req")
+        await store.event(other, own["id"], "tool.execution_complete", {"result": "unique result"})
+        await store.event(other, own["id"], "tool.execution_complete", {"result": "stable"}, "same")
+        await store.event(
+            other, own["id"], "tool.execution_complete", {"result": "duplicated"}, "same"
+        )
+        assert not (await store.search_timeline(other, "duplicated"))["event_matches"]
+        runtime = Runtime(Settings(data=tmp_path), store)
+        observe = next(tool for tool in runtime.tools(other) if tool.name == "observe_session")
+        result = await observe.handler(SimpleNamespace(arguments={"query": "backup", "limit": 1}))
+        data = json.loads(result.text_result_for_llm)
+        assert [row["turn_id"] for row in data["turn_matches"]] == [own["id"]]
+        assert not data["event_matches"]
+        with pytest.raises(ValueError):
+            await store.search_timeline(other, "backup", 21)
+        await store.delete_session("old")
+        await store.db.execute("VACUUM")
+        for table in ("turn_fts", "event_fts"):
+            await store.execute(f"INSERT INTO {table}({table},rank) VALUES('integrity-check',1)")
+    finally:
+        await store.close()
+    await store.open()
+    try:
+        assert (await store.search_timeline(other, "unique"))["event_matches"]
+        assert not (await store.search_timeline("old", "backup"))["turn_matches"]
+    finally:
+        await store.close()
+
+
 async def test_named_chat_is_deduplicated_and_one_hop(store, tmp_path, monkeypatch):
     runtime = Runtime(Settings(data=tmp_path), store)
     monkeypatch.setattr(runtime, "kick", lambda sid: None)

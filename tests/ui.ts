@@ -330,13 +330,21 @@ try {
     await page.locator('#title').filter({hasText:sessions[0].title}).waitFor();
   });
   await run('agent attachments: GIF preview and authenticated download', {width:1024,height:768}, 'light', async page => {
-    await page.route('**/api/sessions/s1', route => route.fulfill({json:{session:sessions[0], turns:[{...turns[0], files:[
+    const aspectFixture = '```svg\n<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="2400"><rect width="1200" height="2400"/></svg>\n```';
+    await page.route('**/api/sessions/s1', route => route.fulfill({json:{session:sessions[0], turns:[{...turns[0], answer:aspectFixture, files:[
       {id:'test-gif', name:'demo.gif', mime:'image/gif', size:42}, {id:'test-report', name:'report.txt', mime:'application/octet-stream', size:6},
       {id:'large-gif', name:'large.gif', mime:'image/gif', size:2*1024*1024},
     ]}], events:[], approvals:[]}}));
     await page.goto(url + '#token=' + token);
     await page.waitForFunction(() => document.querySelector<HTMLImageElement>('.shared-file img[alt="demo.gif"]')?.naturalWidth === 1);
     if (await page.locator('.shared-file img[alt="large.gif"]').count()) throw new Error('Large shared image rendered inline');
+    await page.setViewportSize({width:390,height:360});
+    await page.waitForFunction(() => {
+      const img = document.querySelector<HTMLImageElement>('.answer .inline-svg');
+      if (!img?.naturalWidth) return false;
+      const {width,height} = img.getBoundingClientRect();
+      return width > 0 && width <= img.parentElement!.clientWidth && height <= innerHeight * .6 + 1 && Math.abs(height / width - 2) < .02;
+    });
     const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button',{name:'Download report.txt'}).click()]);
     if (download.suggestedFilename() !== 'report.txt' || await download.failure()) throw new Error('Shared file download failed');
   });
