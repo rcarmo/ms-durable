@@ -278,6 +278,19 @@ async def test_native_azure_routing_resume_and_prefix(
         result = json.loads(compact["answer"])
         assert result["success"] is True and result["messagesRemoved"] > 0
         assert result["summaryContent"] == "FOUNDRY_ADAPTER_OK"
+        before_prefix = first["messages"][0]["content"]
+        assert "/session-state/checkpoints/index.md" in before_prefix
+        index = await store.one(
+            "SELECT content FROM sdk_files WHERE namespace=? AND path='/session-state/checkpoints/index.md'",
+            (sid,),
+        )
+        checkpoints = await store.rows(
+            "SELECT path FROM sdk_files WHERE namespace=? AND path LIKE '/session-state/checkpoints/%.md' AND path NOT LIKE '%/index.md'",
+            (sid,),
+        )
+        assert index and any(
+            row["path"].rsplit("/", 1)[1].encode() in index["content"] for row in checkpoints
+        )
         status = await runtime.metadata(sid)
         assert isinstance(
             status["attribution"], dict

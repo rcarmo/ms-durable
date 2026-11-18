@@ -1,4 +1,6 @@
 import asyncio
+import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -48,8 +50,61 @@ class FakeClient:
         await self.release.wait()
         return self.session
 
+    async def delete_session(self, sid):
+        pass
+
     async def stop(self):
         pass
+
+
+async def test_context_metadata_does_not_initialize_and_redacts_native_values(store, tmp_path):
+    client = FakeClient()
+    runtime = Runtime(Settings(data=tmp_path, access_token="fixture-secret"), store, client)
+    sid = (await store.create_session("Context", "mock"))["id"]
+    assert await runtime.metadata(sid) == {"session": None, "context": None, "attribution": None}
+    assert not client.entered.is_set()
+
+    async def metadata(*args):
+        return {"value": "fixture-secret"}
+
+    client.session.rpc = SimpleNamespace(
+        metadata=SimpleNamespace(
+            snapshot=metadata,
+            context_info=metadata,
+            get_context_attribution=metadata,
+        )
+    )
+    await runtime.session(sid)
+    assert all(value == {"value": "[redacted]"} for value in (await runtime.metadata(sid)).values())
+    await runtime.close()
+
+
+async def test_summary_cache_is_session_history_and_model_scoped(store, tmp_path):
+    client = FakeClient()
+    client.session.wait.set()
+    runtime = Runtime(Settings(data=tmp_path, access_token="fixture-secret"), store, client)
+    runtime.models = [{"id": "gpt-5.6-luna"}]
+    sid = (await store.create_session("Summary", "mock"))["id"]
+    other = (await store.create_session("Other", "mock"))["id"]
+    prompt = "a" * 1496 + "fixture-secret"
+    for id_ in (sid, other):
+        turn = await store.submit(id_, prompt, "initial")
+        await store.execute("UPDATE turns SET status='done' WHERE id=?", (turn["id"],))
+    assert await runtime.summarize(sid) == await runtime.summarize(sid)
+    assert len(client.session.sent) == 1
+    assert json.loads(client.session.sent[0])[0]["prompt"] == "a" * 1496 + "[red"
+    await runtime.summarize(other)
+    assert len(client.session.sent) == 2
+    turn = await store.submit(sid, "New history", "new")
+    await store.execute("UPDATE turns SET status='done' WHERE id=?", (turn["id"],))
+    await runtime.summarize(sid)
+    assert len(client.session.sent) == 3
+    runtime.models = [{"id": "gpt-6-luna"}]
+    assert (await runtime.summarize(sid))["model"] == "gpt-6-luna"
+    assert len(client.session.sent) == 4
+    await runtime.delete_session(sid)
+    assert sid not in runtime.summary_cache
+    await runtime.close()
 
 
 async def test_queued_delegate_is_not_sent_after_parent_settles(store, tmp_path):

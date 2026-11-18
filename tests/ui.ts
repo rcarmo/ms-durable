@@ -263,7 +263,10 @@ try {
     const slots = await first.locator('.message-meta').evaluateAll(rows => rows.map(row => [row.firstElementChild?.textContent,row.children[1]?.querySelector('time')?.dateTime]));
     if (slots[0][0] !== 'You' || slots[1][0] !== '@review' || slots.some(row => !row[1])) throw new Error('Name must precede timestamp');
     await page.getByRole('button',{name:'Rename session'}).click(); await page.locator('#rename-name').fill('Review notes'); await page.locator('#rename-handle').fill('notes');
+    const summaryCalls = calls.filter(call => call === 'POST /api/sessions/s1/summary').length;
+    await page.getByRole('button',{name:'Summarise recent messages with Luna'}).click();
     await page.getByText('Reviewed the release files.').waitFor();
+    if (calls.filter(call => call === 'POST /api/sessions/s1/summary').length !== summaryCalls + 1) throw new Error('Summary should run only on request');
     await page.getByLabel('Description',{exact:true}).fill('Reviews release notes');
     await page.getByLabel('Allow other agents to delegate tasks to this session').check();
     await page.getByRole('button',{name:'Save',exact:true}).click();

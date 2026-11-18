@@ -280,6 +280,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
     <label for="rename-handle">Agent @name</label><input id="rename-handle" maxlength="33" required>
     <label for="rename-description">Description</label><input id="rename-description" maxlength="280" placeholder="What this session does">
     <label><input id="delegate-enabled" type="checkbox"> Allow other agents to delegate tasks to this session</label>
+    <button id="summarize-session" type="button" class="quiet">Summarise recent messages with Luna</button>
     <p id="rename-summary" class="muted" role="status"></p>
     <p id="rename-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="quiet" data-close>Cancel</button><button id="rename-save" class="primary" type="submit">Save</button></div>
   </form></div>
@@ -1145,7 +1146,8 @@ function detach() {
       recentSessions.set(context.id, {session:context.session, turns:context.turns, events:[...context.events.values()], after:context.after, plan:context.plan});
       if (recentSessions.size > 4) recentSessions.delete(recentSessions.keys().next().value);
     }
-    context.controller.abort(); clearTimeout(context.timer); cancelAnimationFrame(context.frame);
+    context.controller.abort(); context.contextRequest?.abort();
+    clearTimeout(context.timer); cancelAnimationFrame(context.frame);
   }
   context = null;
 }
@@ -1223,7 +1225,8 @@ function selectSession(id) {
   if (narrowSidebar.matches) openSidebar(false);
   const row = sessions.find(s => String(s.id) === id);
   text($('title'), id ? sessionLabel(row) : 'New conversation'); document.title = 'Chat';
-  text($('context-label'), '');
+  text($('context-label'), ''); $('context-button').setAttribute('aria-label', 'Context usage');
+  text($('context-summary'), 'Not loaded.'); text($('context-info'), 'Not loaded.');
   $('empty').hidden = Boolean(id); controls(); renderSessions();
   if (id) {
     const ctx = context = {id, controller:new AbortController(), events:new Map(), eventsByTurn:new Map(), dirtyTurns:new Set(), turnIndex:new Map(), turns:[], after:0, active:false, ready:false, timer:null, followLatest:true};
@@ -1258,15 +1261,21 @@ async function connect() {
 function tokens(n) { return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n); }
 async function loadContext(ctx = context) {
   if (!ctx) return;
+  ctx.contextRequest?.abort();
+  const request = ctx.contextRequest = new AbortController();
   try {
-    const data = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/context');
-    if (context !== ctx) return;
+    const data = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/context', {signal:request.signal});
+    if (context !== ctx || request.signal.aborted) return;
     ctx.contextLoaded = true;
     text($('context-info'), format(data));
     const c = data.context?.contextInfo, box = $('context-summary'); box.replaceChildren();
     const compactions = data.attribution?.contextAttribution?.compactions?.count ?? 0;
-    if (!c || !c.limit) { box.append(node('p', '', 'Usage appears after the first turn in this server session.')); text($('context-label'), ''); return; }
-    const pct = n => Math.min(100, n / c.limit * 100);
+    if (!Number.isFinite(c?.limit) || c.limit <= 0 || !Number.isFinite(c.totalTokens)) {
+      box.append(node('p', '', 'Context usage is not available yet.'));
+      text($('context-label'), ''); $('context-button').setAttribute('aria-label', 'Context usage');
+      return;
+    }
+    const pct = n => Math.min(100, Math.max(0, (Number.isFinite(n) ? n : 0) / c.limit * 100));
     const percent = Math.round(pct(c.totalTokens));
     text($('context-label'), percent + '%'); $('context-button').setAttribute('aria-label', 'Context usage ' + percent + '%');
     box.className = '';
@@ -1281,7 +1290,9 @@ async function loadContext(ctx = context) {
     if (c.compactionThreshold) { const s = node('span', 'threshold', 'Auto-compacts at ' + tokens(c.compactionThreshold)); s.style.setProperty('--c', 'var(--warn)'); legend.append(s); }
     box.append(meter, legend, node('p', 'muted', compactions ? compactions + ' compaction' + (compactions === 1 ? '' : 's') + ' so far' : 'No compactions yet'));
     box.lastChild.style.cssText = 'font-size:.82rem;margin-top:.5rem';
-  } catch (error) { text($('context-summary'), error.message); }
+  } catch (error) {
+    if (context === ctx && !request.signal.aborted) text($('context-summary'), error.message);
+  }
 }
 function grow() { const p = $('prompt'); p.style.height = 'auto'; p.style.height = Math.min(p.scrollHeight, innerHeight * 0.35) + 'px'; }
 $('auth').querySelector('form').onsubmit = event => {
@@ -1298,14 +1309,24 @@ $('rename-session').onclick = () => {
   $('delegate-enabled').checked = Boolean(ctx.session.delegation_enabled);
   $('rename-description').value = ctx.session.description || '';
   $('rename-handle').value = ctx.session.handle ? '@' + ctx.session.handle : '@' + (sessionName(ctx.session).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^[^a-z]+|-$|^-+/g,'').slice(0,32) || 'session');
-  text($('rename-summary'), config?.summary_model ? 'Summarising recent messages with Luna…' : 'Luna is not available.');
+  $('summarize-session').hidden = !config?.summary_model;
+  $('summarize-session').disabled = false;
+  text($('rename-summary'), '');
   dialog.showModal(); field.focus(); field.select();
-  if (config?.summary_model) {
-    const request = dialog.summaryRequest = new AbortController();
-    json('/api/sessions/' + encodeURIComponent(ctx.id) + '/summary', {method:'POST',signal:request.signal})
-      .then(result => { if (!request.signal.aborted && dialog.open) text($('rename-summary'),result.text); })
-      .catch(e => { if (!request.signal.aborted && dialog.open) text($('rename-summary'),e.message); });
-  }
+};
+$('summarize-session').onclick = async () => {
+  const ctx = context, dialog = $('rename-dialog'), button = $('summarize-session');
+  if (!ctx || !dialog.open || button.disabled) return;
+  const request = dialog.summaryRequest = new AbortController();
+  button.disabled = true;
+  text($('rename-summary'), 'Summarising recent messages with Luna…');
+  const current = () => context === ctx && !request.signal.aborted && dialog.open;
+  try {
+    const result = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/summary', {method:'POST', signal:request.signal});
+    if (current()) text($('rename-summary'), result.text);
+  } catch (error) {
+    if (current()) text($('rename-summary'), error.message);
+  } finally { if (current()) button.disabled = false; }
 };
 $('rename-dialog').addEventListener('close', () => $('rename-dialog').summaryRequest?.abort());
 $('rename-form').onsubmit = async event => {
