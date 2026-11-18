@@ -33,6 +33,51 @@ async def test_queue_idempotency_conflict_and_reopen(store):
     assert (await store.snapshot(session["id"]))["turns"][0]["status"] == "interrupted"
 
 
+async def test_cancelled_begin_releases_sqlite_transaction(store, monkeypatch):
+    entered = asyncio.Event()
+    execute = store.db.execute
+
+    async def delayed(sql, *args):
+        result = await execute(sql, *args)
+        if sql == "BEGIN IMMEDIATE" and not entered.is_set():
+            entered.set()
+            await asyncio.Future()
+        return result
+
+    monkeypatch.setattr(store.db, "execute", delayed)
+    task = asyncio.create_task(store.create_session("Cancelled", "test-model"))
+    await asyncio.wait_for(entered.wait(), 3)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert (await store.create_session("Next", "test-model"))["title"] == "Next"
+    assert [row["title"] for row in await store.list_sessions()] == ["Next"]
+
+
+async def test_snapshot_keeps_turn_rows_consistent_with_event_cursor(store, monkeypatch):
+    sid = (await store.create_session("Snapshot", "test-model"))["id"]
+    entered, release = asyncio.Event(), asyncio.Event()
+    execute = store.db.execute
+
+    async def delayed(sql, *args):
+        result = await execute(sql, *args)
+        if sql.startswith("SELECT turns.*,") and not entered.is_set():
+            entered.set()
+            await release.wait()
+        return result
+
+    monkeypatch.setattr(store.db, "execute", delayed)
+    read = asyncio.create_task(store.snapshot(sid))
+    await asyncio.wait_for(entered.wait(), 3)
+    write = asyncio.create_task(store.submit(sid, "After snapshot began", "new"))
+    await asyncio.sleep(0)
+    assert not write.done()
+    release.set()
+    snapshot, turn = await asyncio.wait_for(asyncio.gather(read, write), 3)
+    assert snapshot["turns"] == snapshot["events"] == []
+    assert [e["turn_id"] for e in await store.events(sid)] == [turn["id"]]
+
+
 async def test_session_fs_atomic_append_rename_namespace_and_reopen(store):
     a, b = SQLiteSessionFS(store, "a"), SQLiteSessionFS(store, "b")
     await a.write_file("/state/events.jsonl", "one\n")

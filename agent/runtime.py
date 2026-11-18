@@ -951,30 +951,51 @@ class Runtime:
         self.approvals[aid] = future
         if key is not None:
             self.approval_keys[aid] = key
-        await self.store.execute(
-            "INSERT INTO approvals VALUES(?,?,?,?,?,?)",
-            (aid, sid, turn_id, json.dumps(raw, default=str), "pending", time.time()),
-        )
-        await self.store.event(sid, turn_id, "app.approval", {"id": aid, "request": raw})
         try:
+            async with self.store.transaction() as db:
+                await db.execute(
+                    "INSERT INTO approvals VALUES(?,?,?,?,?,?)",
+                    (aid, sid, turn_id, json.dumps(raw, default=str), "pending", time.time()),
+                )
+                await db.execute(
+                    "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
+                    (
+                        sid,
+                        turn_id,
+                        "app.approval",
+                        json.dumps({"id": aid, "request": raw}, default=str),
+                    ),
+                )
             return await future
         finally:
             self.approvals.pop(aid, None)
             self.approval_keys.pop(aid, None)
-            await self.store.execute(
-                "UPDATE approvals SET status='expired' WHERE id=? AND status='pending'", (aid,)
-            )
+            async with self.store.transaction() as db:
+                updated = await db.execute(
+                    "UPDATE approvals SET status='expired' WHERE id=? AND status='pending'", (aid,)
+                )
+                if updated.rowcount:
+                    await db.execute(
+                        "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
+                        (sid, turn_id, "app.approval", "{}"),
+                    )
 
     async def decide(self, aid, allow, *, remember=False):
         async with self.approval_lock:
             future = self.approvals.get(aid)
             if future is None or future.done():
                 raise ValueError("Approval is no longer active")
-            await self.store.execute(
-                "UPDATE approvals SET status=? WHERE id=? AND status='pending'",
-                ("approved" if allow else "denied", aid),
-            )
-            if future.done():
+            async with self.store.transaction() as db:
+                updated = await db.execute(
+                    "UPDATE approvals SET status=? WHERE id=? AND status='pending' RETURNING session_id,turn_id",
+                    ("approved" if allow else "denied", aid),
+                )
+                if row := await updated.fetchone():
+                    await db.execute(
+                        "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
+                        (row["session_id"], row["turn_id"], "app.approval", "{}"),
+                    )
+            if not row or future.done():
                 raise ValueError("Approval is no longer active")
             if allow and remember and aid in self.approval_keys:
                 self.session_approvals.add(self.approval_keys[aid])
@@ -1075,7 +1096,7 @@ class Runtime:
             return await asyncio.shield(task)
 
     async def work(self, sid):
-        while not self.stopping:
+        while not self.stopping and sid not in self.quarantined:
             wakeup = self.wakeups.get(sid, 0)
             turn = await self.store.one(
                 "SELECT * FROM turns WHERE session_id=? AND status='queued' ORDER BY created_at LIMIT 1",
@@ -1216,7 +1237,10 @@ class Runtime:
             except Exception as exc:  # noqa: BLE001 — persist SDK failures
                 if consumer and consumer.done() and consumer.exception():
                     self.quarantined.add(sid)
-                    await session.abort()
+                    try:
+                        await session.abort()
+                    except Exception:  # noqa: BLE001 — preserve the projection failure
+                        log.warning("Could not acknowledge abort after projection failure")
                 await self.store.execute(
                     "UPDATE turns SET status='error',error=? WHERE id=? AND status='running'",
                     (self.redact(str(exc))[:2000], tid),
@@ -1237,6 +1261,8 @@ class Runtime:
         await self.store.session(sid)
         if sid in self.deleting:
             raise KeyError("Unknown session")
+        if sid in self.aborting:
+            return {"status": "cancelling"}
         self.abort_epochs[sid] = self.abort_epochs.get(sid, 0) + 1
         self.aborting.add(sid)
         worker = self.workers.get(sid)
@@ -1246,10 +1272,18 @@ class Runtime:
         if worker and not worker.done():
             worker.cancel()
         try:
-            await self.store.execute(
-                "UPDATE turns SET status='cancelled' WHERE session_id=? AND (status IN ('queued','running') OR (id=? AND status='interrupted'))",
-                (sid, active_id),
-            )
+            async with self.store.transaction() as db:
+                cancelled = await db.execute(
+                    "UPDATE turns SET status='cancelled' WHERE session_id=? AND (status IN ('queued','running') OR (id=? AND status='interrupted')) RETURNING id",
+                    (sid, active_id),
+                )
+                await db.executemany(
+                    "INSERT INTO events(session_id,turn_id,type,data) VALUES(?,?,?,?)",
+                    [
+                        (sid, row["id"], "app.turn_settled", "{}")
+                        for row in await cancelled.fetchall()
+                    ],
+                )
             for aid, future in list(self.approvals.items()):
                 row = await self.store.one("SELECT session_id FROM approvals WHERE id=?", (aid,))
                 if row and row["session_id"] == sid and not future.done():

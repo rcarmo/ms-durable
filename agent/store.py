@@ -169,16 +169,16 @@ CREATE TABLE IF NOT EXISTS sdk_files(
         await self.db.close()
 
     @asynccontextmanager
-    async def transaction(self):
+    async def transaction(self, *, write=True):
         async with self.lock:
-            await self.db.execute("BEGIN IMMEDIATE")
             try:
+                await self.db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
                 yield self.db
+                await self.db.commit()
             except BaseException:
+                # BEGIN is dispatched to aiosqlite's thread even if its await is cancelled.
                 await self.db.rollback()
                 raise
-            else:
-                await self.db.commit()
 
     async def rows(self, sql, args=()):
         async with self.lock:
@@ -616,21 +616,31 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             db.close()
 
     async def snapshot(self, sid):
-        session = await self.session(sid)
-        turns = await self.rows(
+        async with self.transaction(write=False) as db:
+            return await self._snapshot(db, sid)
+
+    async def _snapshot(self, db, sid):
+        async def rows(sql, args):
+            cursor = await db.execute(sql, args)
+            return [dict(row) for row in await cursor.fetchall()]
+
+        sessions = await rows("SELECT * FROM sessions WHERE id=?", (sid,))
+        if not sessions:
+            raise KeyError("Unknown session")
+        turns = await rows(
             "SELECT turns.*, sessions.handle AS sender_handle FROM turns LEFT JOIN sessions ON sessions.id=turns.sender_id "
             "WHERE turns.session_id=? ORDER BY turns.created_at",
             (sid,),
         )
         images = {}
-        for row in await self.rows(
+        for row in await rows(
             "SELECT turn_id,ordinal,name,mime,digest FROM turn_images JOIN turns ON turns.id=turn_images.turn_id "
             "WHERE turns.session_id=? ORDER BY ordinal",
             (sid,),
         ):
             images.setdefault(row.pop("turn_id"), []).append(row)
         files = {}
-        for row in await self.rows(
+        for row in await rows(
             "SELECT shared_files.id,turn_id,name,mime,length(content) AS size FROM shared_files "
             "JOIN turns ON turns.id=shared_files.turn_id WHERE turns.session_id=? ORDER BY shared_files.rowid",
             (sid,),
@@ -639,19 +649,25 @@ CREATE TABLE IF NOT EXISTS sdk_files(
         for turn in turns:
             turn["images"] = images.get(turn["id"], [])
             turn["files"] = files.get(turn["id"], [])
+        events = await rows(
+            "SELECT * FROM events WHERE session_id=? ORDER BY seq LIMIT 2000", (sid,)
+        )
+        for event in events:
+            event["data"] = json.loads(event["data"])
+        plan = await rows("SELECT data FROM session_plans WHERE session_id=?", (sid,))
         return {
-            "session": session,
+            "session": sessions[0],
             "turns": turns,
-            "events": await self.events(sid),
+            "events": events,
             "sent_messages": [
                 {**row, "data": json.loads(row["data"])}
-                for row in await self.rows(
+                for row in await rows(
                     "SELECT seq,turn_id,type,data FROM events WHERE session_id=? AND type='app.chat_sent' ORDER BY seq",
                     (sid,),
                 )
             ],
-            "plan": await self.plan(sid),
-            "approvals": await self.rows(
+            "plan": self._plan_data(plan[0] if plan else None),
+            "approvals": await rows(
                 "SELECT id,request,status FROM approvals WHERE session_id=? AND status='pending'",
                 (sid,),
             ),

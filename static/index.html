@@ -1016,13 +1016,22 @@ function applyEvent(ctx, event) {
   }
 }
 async function snapshot(ctx) {
+  const revision = (ctx.snapshotRequest || 0) + 1;
+  ctx.snapshotRequest = revision;
   const data = await json('/api/sessions/' + encodeURIComponent(ctx.id), {signal:ctx.controller.signal});
-  if (context === ctx) applySnapshot(ctx, data);
+  if (context === ctx && revision > (ctx.snapshotApplied || 0)) {
+    ctx.snapshotApplied = revision;
+    applySnapshot(ctx, data);
+  }
 }
 function applySnapshot(ctx, data, ready = true) {
   ctx.turns = data.turns || []; ctx.ready = ready;
   acceptPlan(ctx, data.plan);
-  for (const e of data.events || []) { ctx.events.set(e.seq, e); ctx.after = Math.max(ctx.after, e.seq); }
+  for (const e of data.events || []) {
+    ctx.events.set(e.seq, e);
+    if (ready) ctx.after = Math.max(ctx.after, e.seq);
+  }
+  if (!ready) ctx.after = data.after || 0;
   // Extra receipts are sparse; do not jump the SSE cursor past unseen events.
   for (const e of data.sent_messages || []) ctx.events.set(e.seq, e);
   showSession(ctx, data.session);
@@ -1084,7 +1093,7 @@ function detach() {
   if (context) {
     if (context.ready) {
       recentSessions.delete(context.id);
-      recentSessions.set(context.id, {session:context.session, turns:context.turns, events:[...context.events.values()], plan:context.plan});
+      recentSessions.set(context.id, {session:context.session, turns:context.turns, events:[...context.events.values()], after:context.after, plan:context.plan});
       if (recentSessions.size > 4) recentSessions.delete(recentSessions.keys().next().value);
     }
     context.controller.abort(); clearTimeout(context.timer); cancelAnimationFrame(context.frame);
@@ -1393,6 +1402,7 @@ $('stop').onclick = async () => {
 };
 if (matchMedia('(pointer:fine)').matches) $('prompt').placeholder = 'Message · Shift+Enter for a new line';
 window.addEventListener('pagehide', () => { bootController?.abort(); detach(); });
+window.addEventListener('pageshow', event => { if (event.persisted) connect(); });
 connect();
 </script>
 </body>

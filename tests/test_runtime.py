@@ -74,18 +74,67 @@ async def test_projection_failure_aborts_and_quarantines(store, tmp_path, monkey
     runtime = Runtime(Settings(data=tmp_path), store, client)
     sid = (await store.create_session("Agent", "mock"))["id"]
 
-    async def fail(*args, **kwargs):
-        raise OSError("projection unavailable")
+    original_event = store.event
+
+    async def fail(sid, tid, kind, *args, **kwargs):
+        if kind == "user.message":
+            raise OSError("projection unavailable")
+        return await original_event(sid, tid, kind, *args, **kwargs)
+
+    async def abort_failed():
+        client.session.aborted += 1
+        raise OSError("abort unavailable")
 
     monkeypatch.setattr(store, "event", fail)
-    await runtime.enqueue(sid, "Do not outlive failed publication", "stable")
+    monkeypatch.setattr(client.session, "abort", abort_failed)
+    first = await store.submit(sid, "Do not outlive failed publication", "stable")
+    second = await store.submit(sid, "Do not send queued work after quarantine", "later")
+    runtime.kick(sid)
     await asyncio.wait_for(asyncio.gather(runtime.workers[sid], return_exceptions=True), 3)
     assert client.session.aborted == 1
     assert sid in runtime.quarantined
     assert not runtime.active
+    assert client.session.sent == ["Do not outlive failed publication"]
+    turns = {row["id"]: row for row in (await store.snapshot(sid))["turns"]}
+    assert turns[first["id"]]["status"] == "error"
+    assert turns[first["id"]]["error"] == "projection unavailable"
+    assert turns[second["id"]]["status"] == "queued"
     with pytest.raises(ValueError, match="recovery"):
         await runtime.enqueue(sid, "later", "new")
     await runtime.close()
+
+
+async def test_approval_decision_publishes_settlement_for_other_clients(store, tmp_path):
+    runtime = Runtime(Settings(data=tmp_path), store, FakeClient())
+    sid = (await store.create_session("Agent", "mock"))["id"]
+    approval = asyncio.create_task(runtime.request_approval(sid, {"kind": "shell"}))
+    try:
+        async with asyncio.timeout(3):
+            while not (snapshot := await store.snapshot(sid))["approvals"]:
+                await asyncio.sleep(0.01)
+        (pending,) = snapshot["approvals"]
+        (notification,) = snapshot["events"]
+        assert notification["type"] == "app.approval"
+        await runtime.decide(pending["id"], False)
+        assert await approval is False
+        snapshot = await store.snapshot(sid)
+        assert snapshot["approvals"] == []
+        assert [e["type"] for e in await store.events(sid, notification["seq"])] == ["app.approval"]
+    finally:
+        if not approval.done():
+            approval.cancel()
+            await asyncio.gather(approval, return_exceptions=True)
+
+
+async def test_abort_publishes_settlement_for_queued_turns(store, tmp_path):
+    runtime = Runtime(Settings(data=tmp_path), store, FakeClient())
+    sid = (await store.create_session("Agent", "mock"))["id"]
+    queued = await store.submit(sid, "Queued", "queued")
+    assert (await runtime.abort(sid))["status"] == "cancelled"
+    snapshot = await store.snapshot(sid)
+    assert snapshot["turns"][0]["status"] == "cancelled"
+    assert snapshot["events"][-1]["type"] == "app.turn_settled"
+    assert snapshot["events"][-1]["turn_id"] == queued["id"]
 
 
 async def test_enqueue_during_idle_check_does_not_lose_wakeup(store, tmp_path, monkeypatch):
