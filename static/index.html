@@ -1616,6 +1616,22 @@ function drawTiming() {
   text($('timing-scale'), (timingZoom >= 1 ? timingZoom : timingZoom.toFixed(2)) + ' px/s');
   text($('timing-status'), timing.order.length ? (timing.more ? '' : 'Start of session') : 'No turns yet.');
 }
+// Use the union of recorded intervals for the axis and elapsed wait. An unknown
+// answer is a point, never evidence of another half-second of waiting.
+function approvalBands(gates, now) {
+  const bands = [];
+  for (const g of [...gates].sort((a,b) => a.requested-b.requested)) {
+    const t = g.requested, end = Number.isFinite(g.resolved) ? Math.max(t,g.resolved) : g.status === 'pending' ? Math.max(t,now) : null;
+    let band = bands.at(-1);
+    const nearbyUnknown = band && band.end == null && end == null && t-band.t < 0.5;
+    if (!band || (!nearbyUnknown && t !== band.t && t >= (band.end ?? band.t))) {
+      band = {t,end:null,wait:null,items:[]}; bands.push(band);
+    }
+    band.items.push(g);
+    if (end != null) { band.end = Math.max(end,band.end ?? t); band.wait = band.end-band.t; }
+  }
+  return bands;
+}
 function drawTimingTurn(turn, collapsed) {
   const PX = timingZoom, RH = 26, HH = 24, PAD = 0.25;
   const now = Date.now() / 1000, live = !DONE.has(turn.status);
@@ -1635,7 +1651,8 @@ function drawTimingTurn(turn, collapsed) {
   title.append(caret, node('strong', '', name));
   if (turn.kind !== 'compact' && turn.prompt) title.append(node('span', 'tt-excerpt', turn.prompt));
   head.append(title, node('span', 'tt-meta', meta.join(' · ')));
-  head.dataset.tip = tip({type:'turn', turn, t0, tEnd, live});
+  const breaks = approvalBands(gates,now);
+  head.dataset.tip = tip({type:'turn', turn, t0, tEnd, live, breaks});
   head.onclick = () => { const c = article.toggleAttribute('data-collapsed'); head.setAttribute('aria-expanded', String(!c)); text(caret, c ? '▸' : '▾'); };
   article.append(head);
   if (!Number.isFinite(t0)) { article.append(node('p', 'tt-note', 'No timing was recorded for this turn.')); return article; }
@@ -1652,24 +1669,16 @@ function drawTimingTurn(turn, collapsed) {
 
   // Keep the band at the recorded request. A tiny pre-permission tool start is not a
   // separate execution bar. Keep earlier work visible if a tool asks again later.
-  const BREAK = 30, breaks = [], shown = new Map();
-  // A request made while an earlier one is still unanswered joins its band.
-  const until = g => g.status === 'pending' ? Infinity : Number.isFinite(g.resolved) ? g.resolved : g.requested + 0.5;
-  for (const g of [...gates].sort((x, y) => x.requested - y.requested)) {
-    const last = breaks.at(-1);
-    if (last && g.requested < Math.max(...last.items.map(until))) last.items.push(g); else breaks.push({requested:g.requested, items:[g]});
-  }
+  const BREAK = 30, shown = new Map();
   for (const k of breaks) {
     const ids = new Set(k.items.map(g => g.index));
     const gated = tools.filter(x => (x.approvals || []).some(i => ids.has(i)));
-    const done = k.items.map(g => g.resolved);
-    // Never count pre-request startup (including parallel tools) as approval time.
-    k.t = k.requested;
-    k.wait = done.every(Number.isFinite) ? Math.max(0, Math.max(...done)-k.t) : (k.items.some(g => g.status === 'pending') ? Math.max(0,now-k.t) : null);
     for (const x of gated) {
-      const previous = shown.get(x);
-      // Suppress a tiny startup sliver, not legitimate work before a later permission request.
-      if (previous != null || (k.t-x.start)*PX <= 3) shown.set(x,previous ?? Math.max(x.start,k.t+(k.wait ?? 0)+1e-6));
+      const own = k.items.find(g => x.approvals.includes(g.index));
+      if (!shown.has(x) && (own.requested-x.start)*PX <= 3) {
+        const answer = own.resolved ?? (own.status === 'pending' ? now : own.requested);
+        shown.set(x,Math.max(x.start,answer+(k.wait == null ? 1e-6 : 0)));
+      }
     }
     k.w = k.wait == null ? BREAK : Math.min(120, BREAK + 14 * Math.log2(Math.max(1, k.wait)));
   }
@@ -1713,9 +1722,17 @@ function drawTimingTurn(turn, collapsed) {
     };
     for (const k of breaks) {
       if (k.x >= right) break;
-      // An unrelated tool may run during a measured wait; retain it on the compressed scale.
-      if (k.wait > 0 && !r.tool?.approvals?.some(i => k.items.some(g => g.index === i))) continue;
-      if (x < k.x + k.w) { draw(x,k.x); x = Math.max(x,k.x + k.w); }
+      if (k.wait > 0) {
+        // The shared band is only an axis transform. Cut out this row's own
+        // recorded waits, never another tool's wait (even in the same band).
+        for (const g of k.items) {
+          if (!r.tool?.approvals?.includes(g.index)) continue;
+          const until = g.resolved ?? (g.status === 'pending' ? now : g.requested);
+          const l = X(g.requested), h = X(until);
+          if (h <= x || l >= right || h <= l) continue;
+          draw(x,l); x = Math.max(x,h);
+        }
+      } else if (x < k.x + k.w) { draw(x,k.x); x = Math.max(x,k.x + k.w); }
     }
     draw(x,right);
   };
@@ -1766,8 +1783,21 @@ function drawTimingTurn(turn, collapsed) {
       line.append(node('span', 'name', t.name), node('span', 'dur', Number.isFinite(t.end) ? secs(t.end - t.start) : live ? 'running' : '—'));
       if (Number.isFinite(t.start)) {
         const g = sv('g', {class:'bar', tabindex:0, 'data-tip':tip({type:'tool', tool:t, t0, calls})}); line.dataset.tip = g.dataset.tip;
-        const x = X(s0);
-        if (!(shown.has(t) && e < shown.get(t))) paint(g,r,x,Math.max(x+3,X(e)),'tool' + (failed ? ' fail' : '') + (Number.isFinite(t.end) ? '' : ' live'));
+        let x = X(s0), right = X(e), ceiling = Infinity;
+        // An unknown wait is an inserted gap, not elapsed execution. If the tool
+        // straddles it by only a few pixels, keep the visible mark on the finish
+        // side. Never widen a tool that finished before the gap across its edge.
+        for (const k of breaks) {
+          if (e <= k.t) { ceiling = k.x; break; }
+          if (k.wait == null && s0 <= k.t && k.x-x <= 3) x = Math.max(x,k.x+k.w);
+        }
+        // Inside a measured band the completion timestamp is known. Keep the
+        // right edge there, including for a sub-pixel success or failure.
+        const inside = breaks.find(k => k.wait > 0 && e > k.t && e <= k.t+k.wait);
+        if (inside) x = Math.max(s0 >= inside.t ? inside.x : 0, Math.min(x,right-3));
+        else { right = Math.min(ceiling,Math.max(x+3,right)); x = Math.min(x,right-3); }
+        const visibleFrom = shown.get(t) ?? -Infinity;
+        if (e > visibleFrom || (e === visibleFrom && Number.isFinite(t.end))) paint(g,r,x,right,'tool' + (failed ? ' fail' : '') + (Number.isFinite(t.end) ? '' : ' live'));
         label(g,r,t.name); bars.append(g);
         const from = callRow(t.call), back = callRow(t.returns_to);
         if (from && Number.isFinite(t.requested)) links.push([from,r,{type:'request',tool:t,call:from.call,t0}]);
@@ -1806,7 +1836,7 @@ function tipContent(d, seg) {
     const t = d.turn, calls = t.calls || [], tools = t.tools || [], use = calls.map(c => c.usage || {}), tok = k => sum(use.map(u => u.tokens?.[k]));
     const models = [...new Set(use.map(u => u.model_name).filter(Boolean))], input = tok('input');
     const done = tools.filter(x => Number.isFinite(x.end)), longest = done.reduce((a, x) => !a || x.end - x.start > a.end - a.start ? x : a, null);
-    const waited = sum((t.approvals || []).map(g => Number.isFinite(g.resolved) ? g.resolved - g.requested : NaN));
+    const waited = sum(d.breaks.map(b => b.wait));
     box.append(node('h3', '', (t.number ? 'Turn ' + t.number : 'Turn') + (d.live ? ' · in progress' : '')));
     box.append(tipRows([
       ['Kind', t.kind === 'prompt' ? null : t.kind],
@@ -1820,7 +1850,7 @@ function tipContent(d, seg) {
       ['Model requests', calls.length + (sum(use.map(u => u.duration_ms)) != null ? ' · ' + secs(sum(use.map(u => u.duration_ms)) / 1000) + ' total' : '')],
       ['Tools', tools.length ? tools.length + ' · ' + secs(sum(done.map(x => x.end - x.start)) || 0) + ' summed' + (tools.some(x => x.success === false) ? ' · ' + tools.filter(x => x.success === false).length + ' failed' : '') : null],
       ['Longest tool', longest ? longest.name + ' · ' + secs(longest.end - longest.start) : null],
-      ['Approvals', (t.approvals || []).length ? t.approvals.length + (waited != null ? ' · ' + secs(waited) + ' waiting' : '') : null],
+      ['Approvals', (t.approvals || []).length ? t.approvals.length + (waited != null ? ' · ' + secs(waited) + ' of recorded wait' : '') : null],
       ['Input tokens', input != null ? count(input) + (tok('cache_read') ? ' (' + pct(tok('cache_read'), input) + ' cached)' : '') : null],
       ['Output tokens', tok('output') != null ? count(tok('output')) + (tok('reasoning') ? ' (' + count(tok('reasoning')) + ' reasoning)' : '') : null],
       ['Premium requests', sum(use.map(u => u.premium_requests))],
@@ -1889,7 +1919,7 @@ function tipContent(d, seg) {
     const k = d.band;
     box.append(node('h3', '', k.items.length + ' approval request' + (k.items.length === 1 ? '' : 's')));
     box.append(tipRows(k.items.map(g => [g.tool || g.kind || 'Tool', (g.status === 'pending' ? 'Waiting' : g.status) + (Number.isFinite(g.resolved) ? ' after ' + secs(g.resolved - g.requested) : '')])));
-    box.append(node('p', 'tip-note', k.wait == null ? 'The answer time was not recorded, so no time is removed: later times shift by the band width only.' : 'Waited ' + secs(k.wait) + ' for an answer. That time is collapsed into the band.'));
+    box.append(node('p', 'tip-note', k.wait == null ? 'The answer time was not recorded, so no time is removed: later times shift by the band width only.' : secs(k.wait) + ' of recorded wait across these requests. Overlapping time is counted once.'));
   } else {
     const c = d.compact;
     box.append(node('h3', '', 'Compaction'));

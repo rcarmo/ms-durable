@@ -41,6 +41,54 @@ export async function timingPaint(page: Page, url: string, root: string, theme: 
     },png);
     if(result.length)throw Error(`${theme} ${z} px/s: ${result.join(', ')}`);
   }
+  // One band spans two overlapping approvals. Success and failure without an
+  // approval, and work after an earlier answer, can all finish inside it.
+  const second={...gate,index:1,requested:107,resolved:114};
+  const parallel={...turn,approvals:[gate,second],tools:[tool('read',104,108),
+    tool('failed lookup',113.998,113.999,{success:false}),tool('early answer',105,113,{approvals:[0]}),
+    tool('last answer',107,115,{approvals:[1]})]};
+  await page.route('**/api/sessions/*/timing*',r=>r.fulfill({json:{turns:[parallel],more:false}}));
+  await page.locator('#timing-close').click(); await page.locator('#timing-toggle').click();
+  await page.locator('.tt-labels').getByText('early answer',{exact:true}).waitFor();
+  for(const z of [...scales].reverse()){
+    while(parseFloat(await page.locator('#timing-scale').innerText())!==z)await page.locator('#timing-zoom-out').click();
+    if(!await chart.evaluate(el=>{
+      const b=el.querySelector<SVGGraphicsElement>('.brk')!.getBBox();
+      const x=(t:number)=>b.x+b.width*(t-105)/9;
+      const bars=[...el.querySelectorAll<SVGRectElement>('rect.tool')].map(r=>r.getBBox());
+      return el.querySelectorAll('.brk').length===1 && bars.length===4 && [108,113.999,113].every((t,i)=>Math.abs(bars[i].x+bars[i].width-x(t))<.01)
+        && Math.abs(bars[2].x-x(112))<.01 && Math.abs(bars[3].x-x(114))<.01;
+    }))throw Error('Incorrect in-band completion at '+z+' px/s');
+  }
+  while(parseFloat(await page.locator('#timing-scale').innerText())<200)await page.locator('#timing-zoom-in').click();
+  await page.locator('.tt-head').hover();
+  if (!(await page.locator('#timing-tip').innerText()).includes('9.00 s of recorded wait')) throw Error('Overlapping waits counted twice');
+  // Reuse the production grouping function: chained and nested waits, an unknown answer
+  // inside a known wait, a disjoint interval, and an open interval as of this frame.
+  const intervals = await page.evaluate(() => {
+    const g=(requested,resolved,status='approved')=>({requested,resolved,status});
+    return approvalBands([g(10,15),g(11,12),g(14,18),g(16,null),g(20,null,'pending'),g(21,22)],24)
+      .map(b=>[b.t,b.wait,b.items.length]);
+  });
+  if(JSON.stringify(intervals)!==JSON.stringify([[10,8,4],[20,4,2]]))throw Error('Incorrect overlap intervals: '+JSON.stringify(intervals));
+  // Historical approval: an unrelated tool failed 9 ms before / 14 ms after the request.
+  const historical={...turn,approvals:[{...gate,resolved:null}],tools:[
+    tool('crossing',104.991,105.014,{success:false}),tool('before',104.995,104.999,{success:false}),
+    tool('long crossing',103,106,{success:false}),tool('write',105,114,{approvals:[0]})]};
+  await page.route('**/api/sessions/*/timing*',r=>r.fulfill({json:{turns:[historical],more:false}}));
+  await page.locator('#timing-close').click(); await page.locator('#timing-toggle').click();
+  await page.locator('.tt-labels').getByText('long crossing',{exact:true}).waitFor();
+  for(const z of [...scales].reverse()){
+    while(parseFloat(await page.locator('#timing-scale').innerText())!==z)await page.locator('#timing-zoom-out').click();
+    const ok=await chart.evaluate(el=>{
+      const b=el.querySelector<SVGGraphicsElement>('.brk')!.getBBox();
+      const rows=[...el.querySelectorAll('.bar')].filter(g=>g.querySelector('rect.fail')).map(g=>[...g.querySelectorAll<SVGRectElement>('rect.fail')].map(r=>r.getBBox()));
+      return rows.length===3 && rows[0].length===1 && rows[0][0].x>=b.x+b.width-.01 && rows[0][0].width>=2.99 &&
+        rows[1].length===1 && rows[1][0].x+rows[1][0].width<=b.x+.01 && rows[1][0].width>=2.99 && rows[2].length===2;
+    });
+    if(!ok)throw Error(`${theme} ${z} px/s: historical approval splits or clips a short failed tool`);
+  }
+  await page.locator('#timing-zoom-in').click(); await page.locator('#timing-zoom-in').click(); await page.locator('#timing-zoom-in').click();
   await page.setViewportSize({width:390,height:780});
   const layout=await page.locator('.tt-chart').evaluate(el=>({width:el.clientWidth,scroll:el.scrollWidth,page:document.documentElement.scrollWidth}));
   if(layout.width<150 || layout.scroll<=layout.width || layout.page>390)throw Error('Timing chart does not scroll within mobile pane: '+JSON.stringify(layout));

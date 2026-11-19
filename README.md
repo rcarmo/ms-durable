@@ -32,7 +32,7 @@ The Linux amd64 image includes the pinned Copilot runtime and runs as UID/GID `1
 docker run --init --rm -p 127.0.0.1:8015:8015 \
   --env-file ./ms-durable.env \
   -v ms-durable-state:/state -v ms-durable-work:/work \
-  ghcr.io/rcarmo/ms-durable:v0.2.1
+  ghcr.io/rcarmo/ms-durable:v0.2.2
 ```
 
 Set `COPILOT_GITHUB_TOKEN` and `MS_DURABLE_TOKEN` in the protected environment file. For your own provider, mount the configuration read-only, set `MS_DURABLE_PROVIDERS_FILE` and supply the required credential variables. If `MS_DURABLE_TOKEN` is unset, the app generates `/state/web-token`. Keep credentials out of the image.
@@ -46,6 +46,16 @@ I may have gone a bit overboard for a baseline shell. Chats have streaming repli
 **Multiplayer:** agents can send a message to another session and reply once to the original sender. Opt in on a named session to let other agents delegate work to it in parallel. This is for those of you who like having sub-agents or just burn up tokens.
 
 See the [browser and tool reference](docs/reference.md#browser-and-application-tools) for limits, tool names and delegation. [MCP and skills](docs/reference.md#mcp-and-skills) covers native extensions.
+
+## Observability
+
+Open `/timing` in a conversation to see where a turn spent its time. The chart uses SDK events and approval timestamps stored in SQLite, so you can watch a running turn or scroll back to an earlier one. Hover over a model call for time to first token, streaming time and token counts when the SDK reports them. Tool rows show duration and outcome; the timing response omits tool arguments and result text.
+
+![Sample timing trace: inspect runs through a seven-second approval wait for write, between two model calls](docs/sample-trace.png)
+
+In this [synthetic 18-second turn](tests/timing-paint.ts), the first model call takes two seconds. The shaded band compresses the seven seconds spent waiting for permission to `write`. The `inspect` bar crosses that band because it kept running. The final model call is grey: its duration is known, but the SDK fixture has no first-token timestamp to split it into waiting and streaming.
+
+In the [overlapping approvals example](docs/overlapping-approvals.svg), two requests wait from +5 to +12 seconds and from +7 to +14 seconds. They share a nine-second band. `read` needs no approval and finishes inside it at +8 seconds.
 
 ## State and safety
 

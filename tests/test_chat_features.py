@@ -836,6 +836,12 @@ async def test_timing_pages_turns_without_tool_payloads(store):
         ),
     )
 
+    # No call ID: this request overlaps bash but is not evidence that bash waited.
+    await store.execute(
+        "INSERT INTO approvals(id,session_id,turn_id,request,status,created_at,resolved_at) VALUES(?,?,?,?,?,?,?)",
+        ("unattributed", sid, tid, '{"kind":"share_file"}', "approved", 1013.2, 1013.8),
+    )
+
     page = await store.timing(sid, limit=2)
     assert page["more"] is True
     assert [t["number"] for t in page["turns"]] == [2, 3]
@@ -861,6 +867,7 @@ async def test_timing_pages_turns_without_tool_payloads(store):
         "kind": None,
         "index": 0,
     }
+    assert len(turn["approvals"]) == 2
     assert tool["approvals"] == [0]
     assert turn["notes"] == []
 

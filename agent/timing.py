@@ -247,17 +247,8 @@ def build_turn(turn, events, approvals, times):
         }
         gates.append(gate)
         owner = next((x for x in tools if tool_call and x["key"] == tool_call), None)
-        if owner is None and not tool_call:
-            # Application approvals (such as file sharing) carry no tool call id; they are
-            # raised by whichever tool was running when the request was made.
-            running = [
-                x
-                for x in tools
-                if x["start"] is not None
-                and x["start"] <= gate["requested"]
-                and (x["end"] is None or x["end"] >= gate["requested"])
-            ]
-            owner = max(running, key=lambda x: x["start"], default=None)
+        # Without a recorded call ID, keep the gate on the turn. Overlapping
+        # execution alone cannot identify the tool that requested permission.
         if owner is not None:
             # A tool can ask more than once (for example, a fetch that is redirected).
             owner["approval"] = gate
