@@ -1709,7 +1709,15 @@ function drawTimingTurn(turn, collapsed) {
   const callRow = n => rows.find(r => r.kind === 'call' && r.call.index === n);
   const labelAt = (s, e) => { const k = breaks.filter(k => k.x < X(e) && k.x + k.w > X(s) - 0.5).at(-1); const x = k ? k.x + k.w : X(s); return {x:x + 4, room:X(e) - x}; };
   const label = (s, e, value, y) => { const at = labelAt(s, e); return sv('text', {x:at.x, y, class:'in', 'data-room':at.room}, value); };
-  const arrow = (x1, y1, x2, y2, detail) => { const xm = x1 + 4, d = `M${x1},${y1}H${xm}V${y2}H${Math.max(xm, x2 - 1)}`, g = sv('g', {class:'link', 'data-tip':tip({...detail, t0})}); g.append(sv('path', {d, class:'dephit'}), sv('path', {d, class:'dep', 'marker-end':`url(#${id})`})); deps.append(g); };
+  // Arrows always enter their target from the left. With room, a single elbow; otherwise leave
+  // to the right, run along the row boundary next to the target, back past its start, and turn in.
+  const STUB = 6;
+  const route = (x1, y1, x2, y2) => {
+    if (x2 - x1 >= 2 * STUB) return `M${x1},${y1}H${x1 + STUB}V${y2}H${x2 - 1}`;
+    const lane = y2 > y1 ? y2 - RH / 2 : y2 + RH / 2;
+    return `M${x1},${y1}H${x1 + STUB}V${lane}H${x2 - STUB}V${y2}H${x2 - 1}`;
+  };
+  const arrow = (x1, y1, x2, y2, detail) => { const d = route(x1, y1, x2, y2), g = sv('g', {class:'link', 'data-tip':tip({...detail, t0})}); g.append(sv('path', {d, class:'dephit'}), sv('path', {d, class:'dep', 'marker-end':`url(#${id})`})); deps.append(g); };
   const labels = node('div', 'tt-labels'); labels.append(node('div', '', 'Elapsed from ' + clock(t0)));
   for (const r of rows) {
     const by = r.y + 5, bh = RH - 10, line = node('div', r.kind);
@@ -1737,7 +1745,7 @@ function drawTimingTurn(turn, collapsed) {
         g.append(sv('rect', {x:X(s0), y:by, width:Math.max(3, X(e) - X(s0)), height:bh, class:'tool' + (failed ? ' fail' : '') + (Number.isFinite(t.end) ? '' : ' live'), rx:2}), label(s0, e, t.name, by + 12));
         bars.append(g);
         const from = callRow(t.call);
-        if (from && Number.isFinite(t.requested)) arrow(X(t.requested), mid(from), X(s0), mid(r), {type:'request', tool:t, call:from.call});
+        if (from && Number.isFinite(t.requested)) arrow(Math.max(X(t.requested), from.call.request ? X(from.call.request.end) : -Infinity), mid(from), X(s0), mid(r), {type:'request', tool:t, call:from.call});
         const back = callRow(t.returns_to);
         if (back && Number.isFinite(t.end) && Number.isFinite(back.call.start)) arrow(X(s0) + Math.max(3, X(t.end) - X(s0)), mid(r), X(back.call.start), mid(back), {type:'return', tool:t, call:back.call, siblings:tools.filter(x => x.returns_to === back.call.index)});
       }
