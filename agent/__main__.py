@@ -12,4 +12,6 @@ if __name__ == "__main__":
         ssl_keyfile=os.getenv("MS_DURABLE_TLS_KEY"),
         ssl_certfile=os.getenv("MS_DURABLE_TLS_CERT"),
         workers=1,
+        # Live event streams never close on their own; do not hold a restart open for them.
+        timeout_graceful_shutdown=5,
     )

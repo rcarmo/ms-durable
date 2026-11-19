@@ -74,7 +74,8 @@ async def test_delete_session_removes_owned_rows_only(store):
     await store.execute("INSERT INTO sdk_files VALUES(?,?,?,0,0)", (sid, "/fixture", b"content"))
     await store.execute("INSERT INTO session_plans VALUES(?,?)", (sid, "{}"))
     await store.execute(
-        "INSERT INTO approvals VALUES(?,?,?,'{}','approved',0)", ("permit", sid, tid)
+        "INSERT INTO approvals(id,session_id,turn_id,request,status,created_at) VALUES(?,?,?,'{}','approved',0)",
+        ("permit", sid, tid),
     )
     receipt = await store.submit(other, "delivered", "message", sender_id=sid)
     await store.delete_session(sid)
@@ -760,3 +761,113 @@ def test_external_preview_rejects_nonpublic_and_unlisted_hosts(monkeypatch):
         preview("https://example.com/", set(), True)
     with pytest.raises(ValueError, match="not enabled"):
         preview("https://example.com/", set(), False)
+
+
+@pytest.mark.asyncio
+async def test_timing_pages_turns_without_tool_payloads(store):
+    sid = (await store.create_session("timing", "mock"))["id"]
+    tids = [(await store.submit(sid, f"prompt {n}", f"r{n}"))["id"] for n in range(3)]
+    for n, tid in enumerate(tids):
+        await store.execute(
+            "UPDATE turns SET status='done', created_at=? WHERE id=?", (100 + n, tid)
+        )
+    old, tid = tids[0], tids[2]
+    # Rows from before the timestamp column fall back to the native transcript.
+    await store.event(sid, old, "user.message", {}, "u0")
+    await store.event(sid, old, "assistant.turn_start", {}, "s0")
+    await store.execute("UPDATE events SET ts=NULL WHERE turn_id=?", (old,))
+    log = "\n".join(
+        json.dumps({"id": i, "timestamp": t})
+        for i, t in [("u0", "2026-01-01T00:00:00Z"), ("s0", "2026-01-01T00:00:01.5Z")]
+    )
+    await store.execute(
+        "INSERT INTO sdk_files VALUES(?,?,?,0,1)",
+        (sid, "/session-state/events.jsonl", log.encode()),
+    )
+    secret = "do-not-ship"
+    for kind, data, ts in [
+        ("user.message", {}, 1000.0),
+        ("assistant.turn_start", {}, 1000.1),
+        (
+            "assistant.usage",
+            {
+                "apiCallId": "a",
+                "duration": 2000,
+                "timeToFirstTokenMs": 500,
+                "model": "m",
+                "modelDisplayName": "Model",
+                "inputTokens": 10,
+                "cacheReadTokens": 8,
+                "initiator": "user",
+            },
+            1003.0,
+        ),
+        ("assistant.message", {"apiCallId": "a", "toolRequests": [{"toolCallId": "c1"}]}, 1003.0),
+        ("assistant.turn_end", {}, 1003.1),
+        (
+            "tool.execution_start",
+            {"toolCallId": "c1", "toolName": "bash", "arguments": {"cmd": secret}},
+            1013.0,
+        ),
+        (
+            "tool.execution_complete",
+            {
+                "toolCallId": "c1",
+                "success": False,
+                "result": {"content": secret},
+                "error": {"message": secret},
+            },
+            1014.0,
+        ),
+        ("assistant.turn_start", {}, 1014.2),
+        ("assistant.turn_end", {}, 1016.0),
+    ]:
+        await store.event(sid, tid, kind, data, None, ts)
+    await store.execute(
+        "INSERT INTO approvals(id,session_id,turn_id,request,status,created_at,resolved_at) VALUES(?,?,?,?,?,?,?)",
+        (
+            "gate",
+            sid,
+            tid,
+            json.dumps({"toolCallId": "c1", "toolName": "bash"}),
+            "approved",
+            1003.2,
+            1012.9,
+        ),
+    )
+
+    page = await store.timing(sid, limit=2)
+    assert page["more"] is True
+    assert [t["number"] for t in page["turns"]] == [2, 3]
+    assert secret not in json.dumps(page)
+    turn = page["turns"][1]
+    first, second = turn["calls"]
+    assert first["request"] == {
+        "start": 1001.0,
+        "first_token": 1001.5,
+        "end": 1003.0,
+        "placed": False,
+    }
+    assert first["usage"]["tokens"] == {"input": 10, "cache_read": 8}
+    assert second["request"] is None
+    (tool,) = turn["tools"]
+    assert (tool["call"], tool["returns_to"], tool["success"]) == (1, 2, False)
+    assert (tool["requested"], tool["start"], tool["end"]) == (1003.0, 1013.0, 1014.0)
+    assert tool["approval"] == {
+        "requested": 1003.2,
+        "resolved": 1012.9,
+        "status": "approved",
+        "tool": "bash",
+        "kind": None,
+        "index": 0,
+    }
+    assert tool["approvals"] == [0]
+    assert turn["notes"] == []
+
+    older = await store.timing(sid, before=page["turns"][0]["id"], limit=2)
+    assert older["more"] is False
+    (first_turn,) = older["turns"]
+    assert first_turn["number"] == 1
+    assert first_turn["calls"][0]["start"] - first_turn["sdk_received"] == pytest.approx(1.5)
+    with pytest.raises(KeyError):
+        await store.timing("missing")

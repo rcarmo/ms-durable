@@ -160,7 +160,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 #plan-items svg{width:16px;height:16px;margin-top:2px;color:var(--muted)}
 #plan-items [data-status=in_progress] .plan-step{font-weight:600}#plan-items [data-status=in_progress] svg{color:var(--accent)}
 .plan-status{display:block;color:var(--muted);font-size:12px}.plan-description{margin-bottom:8px;overflow-wrap:anywhere}
-#plan-toggle[aria-expanded=true]{background:var(--selected)}
+#plan-toggle[aria-expanded=true]{background:var(--selected);color:var(--text)}
 .tool-view{display:flex;gap:4px;margin:6px 0}.tool-view button{font-size:12px;padding:2px 8px}.tool-view button[aria-pressed=true]{background:var(--selected)}
  .message-meta .speaker{margin:0;color:var(--text);overflow-wrap:anywhere;min-width:0}.answer-meta{margin-top:12px}
 #rename-form{display:grid;gap:8px}#rename-name{width:100%;border:1px solid var(--border);border-radius:4px;padding:6px 8px;background:var(--bg)}
@@ -177,12 +177,46 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 .shared-file button{max-width:100%;overflow-wrap:anywhere;text-align:start}
 .activity-receipts{display:block;color:var(--text);font-size:.85em;white-space:pre-wrap;overflow-wrap:anywhere}
 .activity-receipts:empty{display:none}
+#timing-toggle[aria-pressed=true]{background:var(--selected);color:var(--text)}
+#conversation-body.timing-open{display:flex}.timing-open #chat-column,.timing-open #plan-panel{display:none!important}
+#timing-panel{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;--wait:#5b84c4;--stream:#c58b2a;--tool:#2e8b76;--fail:#c4453c;--band:#9aa1ab}
+#timing-panel>header{display:flex;align-items:center;gap:8px;padding:6px 12px 6px 16px;border-bottom:1px solid var(--border)}#timing-panel>header h2{flex:1}
+.timing-zoom{display:flex;align-items:center;gap:2px;color:var(--muted);font-size:12px}.timing-zoom button{padding:2px 8px}
+#timing-scroll{flex:1;overflow:auto;overscroll-behavior:contain;padding:12px 16px 24px;position:relative}
+#timing-older{display:block;margin:0 auto 12px}#timing-status{color:var(--muted);font-size:12px;text-align:center;margin:0 0 8px}#timing-status:empty{display:none}
+.tt{border:1px solid var(--border);border-radius:6px;margin:0 0 6px;background:var(--bg)}
+.tt-head{display:block;width:100%;text-align:start;padding:6px 10px;border-radius:6px 6px 0 0;background:var(--panel)}
+.tt-head .tt-prompt{display:flex;gap:6px;align-items:baseline;min-width:0;white-space:nowrap}.tt-caret{width:1em;color:var(--muted)}.tt-excerpt{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.tt-head .tt-meta{display:block;color:var(--muted);font-size:12px}
+.tt[data-collapsed] .tt-body{display:none}.tt[data-collapsed] .tt-head{border-radius:6px}
+.tt-body{display:grid;grid-template-columns:var(--tt-labels,230px) minmax(0,1fr)}
+.tt-labels{border-inline-end:1px solid var(--border);font-size:12.5px}
+.tt-labels div{display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;border-top:1px solid var(--border);white-space:nowrap}
+.tt-labels div:first-child{height:24px;border-top:0;color:var(--muted);font-size:11px}
+.tt-labels .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}.tt-labels .tool .name{padding-inline-start:14px}
+.tt-labels .dur{font:11.5px ui-monospace,monospace;color:var(--muted)}.tt-labels .sub{color:var(--muted);font-size:11px}
+.tt-chart{overflow-x:auto}.tt-chart svg{display:block}
+.tt-note{color:var(--muted);font-size:12px;padding:4px 10px 6px;grid-column:1/-1;border-top:1px solid var(--border)}
+.idle-gap{color:var(--muted);font-size:11px;text-align:center;margin:0 0 6px;letter-spacing:.04em}
+svg.timing text{font-family:inherit}.timing .grid{stroke:var(--border);stroke-width:1;opacity:.6}.timing .tick{font-size:10px;fill:var(--muted)}
+.timing .row{stroke:var(--border);opacity:.6}.timing .dep{fill:none;stroke:var(--muted);stroke-width:1;opacity:.6}.timing .dephit{fill:none;stroke:transparent;stroke-width:9;pointer-events:stroke}.timing .link:hover .dep{stroke:var(--text);opacity:1}.tt-labels [data-tip]:hover{background:var(--hover)}.idle-gap[data-tip]{cursor:default}.timing .arh{fill:var(--muted)}
+.timing .bar{cursor:default}.timing .bar:focus{outline:none}.timing .bar:focus-visible rect,.timing .bar:hover rect{stroke:var(--text);stroke-width:1}
+.timing .wait{fill:var(--wait)}.timing .stream{fill:var(--stream)}.timing .unknown{fill:var(--muted);opacity:.5}.timing .tool{fill:var(--tool)}.timing .tool.fail{fill:var(--fail)}.timing .compact{fill:var(--accent)}
+.timing .live{opacity:.65}.timing .in{font-size:10.5px;font-weight:650;fill:#fff;pointer-events:none}
+.timing .brk{fill:var(--band);stroke:var(--band);opacity:.5}.timing .brkt{font-size:11px;font-weight:700;fill:var(--text);text-anchor:middle;pointer-events:none}
+.timing-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted);padding:6px 16px;border-top:1px solid var(--border)}
+.timing-legend i{display:inline-block;width:12px;height:8px;border-radius:2px;margin-inline-end:4px}
+#timing-tip{position:fixed;z-index:20;max-width:min(420px,90vw);background:var(--raised);color:var(--text);border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 24px rgb(0 0 0/.3);padding:8px 10px;font-size:12.5px;pointer-events:none}
+#timing-tip h3{margin:0 0 4px;font-size:13px}#timing-tip dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:1px 10px;margin:0}#timing-tip dt{color:var(--muted)}#timing-tip dd{margin:0;overflow-wrap:anywhere}
+#timing-tip pre{margin:6px 0 0;max-height:9em;overflow:hidden;font-size:11px;background:var(--panel);padding:4px 6px;border-radius:4px}#timing-tip .tip-note{color:var(--muted);font-size:11.5px;margin-top:4px}
 </style>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <symbol id="i-new" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
 <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+<symbol id="i-plan" viewBox="0 0 24 24"><path d="m3.5 6 1.5 1.5L8 4.5M3.5 12.5 5 14l3-3"/><path d="M11 6h9M11 12.5h9M11 19h9"/><circle cx="5.5" cy="19" r="1.5"/></symbol>
+<symbol id="i-timing" viewBox="0 0 24 24"><path d="M3 3v18h18"/><rect x="6" y="5.5" width="7" height="3" rx="1"/><rect x="10" y="10.5" width="9" height="3" rx="1"/><rect x="8" y="15.5" width="5" height="3" rx="1"/></symbol>
 <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
 <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
 <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
@@ -231,7 +265,8 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
     <button id="menu" type="button" class="iconbtn" aria-label="Conversations" aria-expanded="false" aria-controls="sidebar"><svg class="icon"><use href="#i-menu"/></svg></button>
     <h2 id="title">New conversation</h2>
     <button id="rename-session" class="iconbtn" type="button" title="Rename session" aria-label="Rename session" hidden><svg class="icon" aria-hidden="true"><use href="#i-new"/></svg></button>
-    <button id="plan-toggle" type="button" aria-expanded="false" aria-controls="plan-panel" hidden>Plan</button>
+    <button id="plan-toggle" type="button" class="iconbtn" aria-expanded="false" aria-controls="plan-panel" aria-label="Plan" title="Plan" hidden><svg class="icon" aria-hidden="true"><use href="#i-plan"/></svg></button>
+    <button id="timing-toggle" type="button" class="iconbtn" aria-pressed="false" aria-controls="timing-panel" aria-label="Timing" title="Timing of model calls and tools" hidden><svg class="icon" aria-hidden="true"><use href="#i-timing"/></svg></button>
     <button id="context-button" type="button" aria-label="Context usage" title="Context usage and compaction" hidden><svg class="icon"><use href="#i-gauge"/></svg><span id="context-label"></span></button>
   </header>
   <div id="notice" role="alert" hidden><svg class="icon" style="color:var(--warn)"><use href="#i-alert"/></svg><p></p><button type="button" class="iconbtn" aria-label="Dismiss" id="notice-close"><svg class="icon"><use href="#i-close"/></svg></button></div>
@@ -271,8 +306,20 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
       <ol id="plan-items"></ol>
     </div>
   </section>
+  <section id="timing-panel" role="region" aria-labelledby="timing-heading" hidden>
+    <header><h2 id="timing-heading">Timing</h2>
+      <div class="timing-zoom" role="group" aria-label="Time scale"><button id="timing-zoom-out" type="button" aria-label="Zoom out">−</button><span id="timing-scale"></span><button id="timing-zoom-in" type="button" aria-label="Zoom in">+</button></div>
+      <button id="timing-close" type="button" class="iconbtn" aria-label="Close timing"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></header>
+    <div id="timing-scroll" tabindex="0" aria-label="Turn timing, oldest at the top">
+      <p id="timing-status" role="status"></p>
+      <button id="timing-older" type="button" class="quiet" hidden>Load earlier turns</button>
+      <div id="timing-turns"></div>
+    </div>
+    <div class="timing-legend"><span title="From sending the request until the first output token arrived (SDK timeToFirstTokenMs)"><i style="background:var(--wait)"></i>Waiting for first token</span><span title="From the first output token until the request finished (SDK duration minus time to first token)"><i style="background:var(--stream)"></i>Streaming output</span><span title="Tool execution, from the SDK start event to its completion event"><i style="background:var(--tool)"></i>Tool</span><span><i style="background:var(--fail)"></i>Failed tool</span><span title="Time spent waiting for approval answers is collapsed into a band; times after it are shifted"><i style="background:var(--band);opacity:.5"></i>Approvals (scale shifted)</span><span title="Arrows run from the model call that requested a tool to the tool, and from the tool to the model call that received its result">→ tool request / result</span></div>
+  </section>
   </div>
 </main>
+<div id="timing-tip" role="tooltip" hidden></div>
 </div>
 <dialog id="rename-dialog" aria-labelledby="rename-heading">
   <header><h2 id="rename-heading">Rename session</h2><button type="button" class="iconbtn" aria-label="Close" data-close><svg class="icon"><use href="#i-close"/></svg></button></header>
@@ -392,6 +439,7 @@ function controls() {
   $('context-button').hidden = !selected;
   $('timeline-button').hidden = $('diagnostics').hidden = !selected;
   $('plan-toggle').hidden = !selected;
+  $('timing-toggle').hidden = !selected;
   $('rename-session').hidden = !selected; $('rename-session').disabled = !context?.ready;
   $('agent-field').hidden = Boolean(selected);
   $('attach').disabled = sending || draftImages().length >= 3;
@@ -1056,6 +1104,7 @@ function applyEvent(ctx, event) {
   if (!Number.isFinite(event.seq)) return;
   ctx.after = Math.max(ctx.after, event.seq);
   if (!rememberEvent(ctx, event)) return;
+  if (timing.open && TIMING_TYPES.has(event.type)) scheduleTiming(ctx);
   if (event.type === 'app.plan_updated') acceptPlan(ctx, event.data);
   if (event.type === 'turn.updated' && event.data?.id != null) {
     const i = ctx.turns.findIndex(t => String(t.id) === String(event.data.id));
@@ -1219,6 +1268,7 @@ function selectSession(id) {
   for (const url of imageURLs) URL.revokeObjectURL(url); imageURLs.clear();
   detach(); selected = id;
   drawPlan(); if (!id) setPlanOpen(false);
+  resetTiming(); if (!id && timing.open) setTimingOpen(false);
   $('approvals').replaceChildren(); $('approvals').dataset.ids = '';
   $('prompt').value = drafts.get(id || 'new') || ''; grow(); drawDraftImages(); $('slash-menu').hidden = true;
   $('turns').replaceChildren(); turnNodes.clear(); $('jump').hidden = true;
@@ -1234,6 +1284,7 @@ function selectSession(id) {
     const cached = recentSessions.get(id);
     if (cached) applySnapshot(ctx, {...cached, session:row || cached.session}, false);
     stream(ctx);
+    if (timing.open) loadTiming(ctx, true);
   }
   else { status(config ? 'Ready' : 'Disconnected', config ? 'live' : 'down'); $('prompt').focus(); }
 }
@@ -1415,7 +1466,7 @@ const transcriptResize = new ResizeObserver(() => {
 });
 transcriptResize.observe($('turns'));
 transcriptResize.observe($('transcript'));
-const slashCommands = {'/new': 'new', '/plan': 'plan-toggle', '/context': 'context-button', '/rename': 'rename-session', '/settings': 'open-settings'};
+const slashCommands = {'/new': 'new', '/plan': 'plan-toggle', '/timing': 'timing-toggle', '/context': 'context-button', '/rename': 'rename-session', '/settings': 'open-settings'};
 function runSlash(command) {
   const button = $(slashCommands[command]); if (!button || button.hidden || button.disabled) return false;
   $('prompt').value = ''; $('prompt').dispatchEvent(new Event('input')); button.click(); return true;
@@ -1433,6 +1484,7 @@ $('prompt').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey 
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
   if ($('sidebar').classList.contains('open')) closeSidebar();
+  else if (timing.open) { event.preventDefault(); setTimingOpen(false, true); }
   else if (!$('plan-panel').hidden) { event.preventDefault(); setPlanOpen(false, true); }
 });
 $('composer').onsubmit = async event => {
@@ -1471,6 +1523,372 @@ $('stop').onclick = async () => {
   try { await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/abort', {method:'POST', body:{}}); scheduleSnapshot(ctx); }
   catch (e) { notice(e.message); } finally { controls(); }
 };
+// ---- Timing pane: per-turn Gantt of model calls, tools and approvals ----
+const timing = {open:false, ctx:null, turns:new Map(), order:[], more:false, loading:false, refresh:null, live:null, details:new Map(), seq:0};
+const TIMING_TYPES = new Set(['assistant.turn_start','assistant.turn_end','assistant.usage','assistant.message','tool.execution_start','tool.execution_complete','app.approval','app.turn_started','app.turn_settled','app.turn_queued','session.compaction_start','session.compaction_complete','turn.updated']);
+const ZOOMS = [6.25, 12.5, 25, 50, 100, 200];
+let timingZoom = 50;
+try { const z = Number(localStorage.getItem('ms-durable.timing-zoom')); if (ZOOMS.includes(z)) timingZoom = z; } catch {}
+const SVGNS = 'http://www.w3.org/2000/svg';
+function sv(tag, attrs = {}, textValue) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null) el.setAttribute(k, String(v));
+  if (textValue !== undefined) el.textContent = textValue;
+  return el;
+}
+function secs(n) {
+  if (!Number.isFinite(n)) return '—';
+  if (n < 1) return Math.round(n * 1000) + ' ms';
+  if (n < 60) return n.toFixed(2) + ' s';
+  if (n < 3600) return Math.floor(n / 60) + ' min ' + Math.round(n % 60) + ' s';
+  return Math.floor(n / 3600) + ' h ' + Math.round(n % 3600 / 60) + ' min';
+}
+function clock(t) { return Number.isFinite(t) ? new Date(t * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '—'; }
+function count(n) { return Number.isFinite(n) ? n.toLocaleString() : '—'; }
+function bytes(n) { return !Number.isFinite(n) ? '—' : n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+function setTimingOpen(open, returnFocus = false) {
+  if (open && !context) return;
+  timing.open = open;
+  $('timing-panel').hidden = !open; $('conversation-body').classList.toggle('timing-open', open);
+  $('timing-toggle').setAttribute('aria-pressed', String(open));
+  hideTip();
+  if (open) { loadTiming(context, true); $('timing-scroll').focus({preventScroll:true}); }
+  else {
+    clearTimeout(timing.refresh); clearInterval(timing.live); timing.live = null;
+    timing.request?.abort(); if (returnFocus) $('timing-toggle').focus();
+    if (context?.followLatest) bottom();
+  }
+}
+function resetTiming() {
+  timing.request?.abort(); clearTimeout(timing.refresh); clearInterval(timing.live); timing.live = null;
+  timing.ctx = null; timing.turns.clear(); timing.order = []; timing.more = false; timing.details.clear();
+  $('timing-turns').replaceChildren(); $('timing-older').hidden = true; text($('timing-status'), '');
+}
+async function loadTiming(ctx, latest, before) {
+  if (!ctx) return;
+  if (timing.ctx !== ctx) { resetTiming(); timing.ctx = ctx; }
+  if (before && timing.loading) return;
+  const request = timing.request = new AbortController(), seq = ++timing.seq;
+  timing.loading = true;
+  if (!timing.order.length) text($('timing-status'), 'Loading…');
+  try {
+    const q = before ? '?before=' + encodeURIComponent(before) + '&limit=20' : '?limit=20';
+    const page = await json('/api/sessions/' + encodeURIComponent(ctx.id) + '/timing' + q, {signal:request.signal});
+    if (timing.ctx !== ctx || !timing.open || seq !== timing.seq) return;
+    const scroll = $('timing-scroll'), stick = latest && (!timing.order.length || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40);
+    const fromBottom = scroll.scrollHeight - scroll.scrollTop;
+    // Redraw only when something changed, so hovering is not interrupted by idle refreshes.
+    const changed = Boolean(before) || page.turns.some(t => JSON.stringify(timing.turns.get(t.id)) !== JSON.stringify(t)) || page.more !== timing.more && !timing.order.length;
+    for (const t of page.turns) timing.turns.set(t.id, t);
+    const ids = page.turns.map(t => t.id);
+    if (before) { timing.order = [...ids, ...timing.order.filter(id => !ids.includes(id))]; timing.more = page.more; }
+    else {
+      const known = new Set(timing.order);
+      if (!timing.order.length) timing.more = page.more;
+      for (const id of ids) if (!known.has(id)) timing.order.push(id);
+    }
+    if (changed || page.turns.some(t => !DONE.has(t.status))) drawTiming();
+    if (before) scroll.scrollTop = scroll.scrollHeight - fromBottom;
+    else if (stick) scroll.scrollTop = scroll.scrollHeight;
+    const running = page.turns.some(t => !DONE.has(t.status));
+    if (running && !timing.live) timing.live = setInterval(() => scheduleTiming(ctx, 0), 2000);
+    if (!running && timing.live && !timing.order.some(id => !DONE.has(timing.turns.get(id)?.status))) { clearInterval(timing.live); timing.live = null; }
+  } catch (error) {
+    if (!request.signal.aborted && timing.ctx === ctx) text($('timing-status'), error.message);
+  } finally { if (seq === timing.seq) timing.loading = false; }
+}
+function scheduleTiming(ctx, delay = 600) {
+  if (!timing.open || context !== ctx) return;
+  clearTimeout(timing.refresh);
+  timing.refresh = setTimeout(() => loadTiming(ctx, true), delay);
+}
+function drawTiming() {
+  timing.details.clear();
+  const box = $('timing-turns'), collapsed = new Set([...box.querySelectorAll('.tt[data-collapsed]')].map(el => el.dataset.turn));
+  const items = []; let previous = null;
+  for (const id of timing.order) {
+    const turn = timing.turns.get(id); if (!turn) continue;
+    if (previous && Number.isFinite(previous.end) && Number.isFinite(turn.start) && turn.start - previous.end > 1) { const gap = node('p', 'idle-gap', 'idle · ' + secs(turn.start - previous.end)); gap.dataset.tip = tip({type:'idle', from:previous, to:turn}); items.push(gap); }
+    items.push(drawTimingTurn(turn, collapsed.has(id))); previous = turn;
+  }
+  box.replaceChildren(...items);
+  $('timing-older').hidden = !timing.more;
+  text($('timing-scale'), (timingZoom >= 1 ? timingZoom : timingZoom.toFixed(2)) + ' px/s');
+  text($('timing-status'), timing.order.length ? (timing.more ? '' : 'Start of session') : 'No turns yet.');
+}
+function drawTimingTurn(turn, collapsed) {
+  const PX = timingZoom, RH = 26, HH = 24, PAD = 0.25;
+  const now = Date.now() / 1000, live = !DONE.has(turn.status);
+  const article = node('article', 'tt'); article.dataset.turn = turn.id;
+  if (collapsed) article.dataset.collapsed = '';
+  const head = node('button', 'tt-head'); head.type = 'button'; head.setAttribute('aria-expanded', String(!collapsed));
+  const calls = turn.calls || [], tools = turn.tools || [], gates = turn.approvals || [];
+  const t0 = turn.start ?? turn.received, tEnd = live ? now : (turn.end ?? turn.finished ?? t0);
+  const meta = [clock(t0), STATES[turn.status] || (turn.status === 'done' ? 'Done' : turn.status)];
+  if (Number.isFinite(t0) && Number.isFinite(tEnd)) meta.push(secs(tEnd - t0));
+  meta.push(calls.length + ' model call' + (calls.length === 1 ? '' : 's'), tools.length + ' tool' + (tools.length === 1 ? '' : 's'));
+  if (gates.length) meta.push(gates.length + ' approval' + (gates.length === 1 ? '' : 's'));
+  if (Number.isFinite(turn.received) && Number.isFinite(turn.sdk_received) && turn.sdk_received > turn.received) meta.push(secs(turn.sdk_received - turn.received) + ' before the SDK received the prompt');
+  const name = (turn.number ? 'Turn ' + turn.number : 'Turn') + (turn.kind === 'compact' ? ' · compaction' : '');
+  const title = node('span', 'tt-prompt'), caret = node('span', 'tt-caret', collapsed ? '▸' : '▾');
+  caret.setAttribute('aria-hidden', 'true');
+  title.append(caret, node('strong', '', name));
+  if (turn.kind !== 'compact' && turn.prompt) title.append(node('span', 'tt-excerpt', turn.prompt));
+  head.append(title, node('span', 'tt-meta', meta.join(' · ')));
+  head.dataset.tip = tip({type:'turn', turn, t0, tEnd, live});
+  head.onclick = () => { const c = article.toggleAttribute('data-collapsed'); head.setAttribute('aria-expanded', String(!c)); text(caret, c ? '▸' : '▾'); };
+  article.append(head);
+  if (!Number.isFinite(t0)) { article.append(node('p', 'tt-note', 'No timing was recorded for this turn.')); return article; }
+
+  // Rows: each model call followed by the tools it requested; compactions at the end.
+  const rows = [];
+  for (const call of calls) {
+    rows.push({kind:'call', call});
+    for (const tool of tools.filter(x => x.call === call.index)) rows.push({kind:'tool', tool});
+  }
+  for (const tool of tools.filter(x => !calls.some(c => c.index === x.call))) rows.push({kind:'tool', tool});
+  for (const c of turn.compactions || []) rows.push({kind:'compact', compact:c});
+  const end = x => Number.isFinite(x) ? x : (live ? now : tEnd);
+
+  // Approval bands. The SDK reports a tool as started before it asks for permission, and a
+  // requesting call can still be streaming then, so a band begins at the later of the earliest
+  // start in its batch and the end of that call; it never begins before the previous band.
+  // Gated tools are drawn from the end of their last band: until then they were waiting for
+  // permission, not running. Tooltips keep the SDK's reported times.
+  const BREAK = 30, breaks = [], shown = new Map();
+  // A request made while an earlier one is still unanswered joins its band.
+  const until = g => g.status === 'pending' ? Infinity : Number.isFinite(g.resolved) ? g.resolved : g.requested + 0.5;
+  for (const g of [...gates].sort((x, y) => x.requested - y.requested)) {
+    const last = breaks.at(-1);
+    if (last && g.requested < Math.max(...last.items.map(until))) last.items.push(g); else breaks.push({requested:g.requested, items:[g]});
+  }
+  let floor = -Infinity;
+  for (const k of breaks) {
+    const ids = new Set(k.items.map(g => g.index));
+    const gated = tools.filter(x => (x.approvals || []).some(i => ids.has(i)));
+    const batch = new Set(gated.map(x => x.call)), latest = Math.max(k.requested, ...gated.map(x => x.start).filter(Number.isFinite));
+    const starts = tools.filter(x => batch.has(x.call) && Number.isFinite(x.start) && x.start <= latest && x.start > floor).map(x => x.start);
+    const streaming = calls.filter(c => batch.has(c.index) && c.request).map(c => c.request.end);
+    k.t = Math.max(floor + 1e-3, Math.min(k.requested, ...starts), ...streaming);
+    const done = k.items.map(g => g.resolved);
+    k.wait = done.every(Number.isFinite) ? Math.max(0, Math.max(...done) - k.t) : (k.items.some(g => g.status === 'pending') ? Math.max(0, now - k.t) : null);
+    floor = k.t + (k.wait ?? 0);
+    for (const x of gated) shown.set(x, floor + 1e-6);
+    k.w = k.wait == null ? BREAK : Math.min(120, BREAK + 14 * Math.log2(Math.max(1, k.wait)));
+  }
+  const a = t0 - PAD;
+  const shift = t => breaks.filter(k => k.t > a && k.t < t).reduce((n, k) => { const w = k.wait ?? 0; return n + (t >= k.t + w ? k.w - w * PX : (w ? (t - k.t) / w * k.w : 0) - (t - k.t) * PX); }, 0);
+  const X = t => (t - a) * PX + shift(t);
+  for (const k of breaks) k.x = X(k.t);
+  const W = Math.ceil(X(tEnd + PAD)) + 8, H = HH + rows.length * RH;
+  const svg = sv('svg', {class:'timing', width:W, height:H, viewBox:`0 0 ${W} ${H}`, role:'group', 'aria-label':'Timing chart'});
+  const defs = sv('defs'), id = 'arw-' + turn.id.replace(/[^a-z0-9]/gi, '');
+  defs.append(sv('marker', {id, viewBox:'0 0 6 6', refX:5, refY:3, markerWidth:6, markerHeight:6, orient:'auto'}));
+  defs.lastChild.append(sv('path', {d:'M0,0L6,3L0,6z', class:'arh'}));
+  const mask = sv('mask', {id:id + '-cut', maskUnits:'userSpaceOnUse', x:0, y:0, width:W, height:H});
+  mask.append(sv('rect', {width:W, height:H, fill:'#fff'}));
+  for (const k of breaks) mask.append(sv('rect', {x:k.x, y:HH, width:k.w, height:H - HH, fill:'#000'}));
+  defs.append(mask); svg.append(defs);
+  // Ticks: choose a step that keeps labels apart.
+  const span = tEnd - t0, step = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600].find(s => s * PX >= 60) || 3600;
+  for (let t = 0; t <= span + PAD; t += step) {
+    const x = X(t0 + t); svg.append(sv('line', {x1:x, x2:x, y1:0, y2:H, class:'grid'}), sv('text', {x:x + 3, y:15, class:'tick'}, '+' + (step < 1 ? t.toFixed(2).replace(/0$/, '') : Math.round(t)) + ' s'));
+  }
+  rows.forEach((r, i) => { r.y = HH + i * RH; svg.append(sv('line', {x1:0, x2:W, y1:r.y, y2:r.y, class:'row'})); });
+  const mid = r => r.y + RH / 2;
+  // Approval bands sit behind arrows and bars and only cover this turn's rows.
+  for (const k of breaks) {
+    const x = k.x, y0 = HH, y1 = H, step = 8, amp = 4; let left = `M${x},${y0}`, right = '';
+    for (let y = y0, j = 0; y < y1; y += step, j++) left += `L${x + (j % 2 ? amp : 0)},${Math.min(y1, y + step)}`;
+    for (let y = y1, j = 0; y > y0; y -= step, j++) right += `L${x + k.w - (j % 2 ? amp : 0)},${Math.max(y0, y - step)}`;
+    const g = sv('g', {class:'bar', tabindex:0, 'data-tip':tip({type:'approval', band:k, t0})});
+    g.append(sv('path', {d:`${left}L${x + k.w},${y1}${right}Z`, class:'brk'}), sv('text', {transform:`translate(${x + k.w / 2 + 4},${(y0 + y1) / 2}) rotate(-90)`, class:'brkt'}, 'approvals' + (k.wait == null ? '' : ' · ' + secs(k.wait))));
+    svg.append(g);
+  }
+  const deps = sv('g'), bars = sv('g', {mask:`url(#${id}-cut)`});
+  const callRow = n => rows.find(r => r.kind === 'call' && r.call.index === n);
+  const labelAt = (s, e) => { const k = breaks.filter(k => k.x < X(e) && k.x + k.w > X(s) - 0.5).at(-1); const x = k ? k.x + k.w : X(s); return {x:x + 4, room:X(e) - x}; };
+  const label = (s, e, value, y) => { const at = labelAt(s, e); return sv('text', {x:at.x, y, class:'in', 'data-room':at.room}, value); };
+  const arrow = (x1, y1, x2, y2, detail) => { const xm = x1 + 4, d = `M${x1},${y1}H${xm}V${y2}H${Math.max(xm, x2 - 1)}`, g = sv('g', {class:'link', 'data-tip':tip({...detail, t0})}); g.append(sv('path', {d, class:'dephit'}), sv('path', {d, class:'dep', 'marker-end':`url(#${id})`})); deps.append(g); };
+  const labels = node('div', 'tt-labels'); labels.append(node('div', '', 'Elapsed from ' + clock(t0)));
+  for (const r of rows) {
+    const by = r.y + 5, bh = RH - 10, line = node('div', r.kind);
+    if (r.kind === 'call') {
+      const c = r.call, u = c.usage || {}, q = c.request;
+      line.append(node('span', 'name', 'Model call ' + c.index), node('span', 'sub', u.initiator === 'user' ? 'prompt' : u.initiator ? 'tool results' : ''), node('span', 'dur', q ? secs(q.end - q.start) : live && !Number.isFinite(c.end) ? 'running' : '—'));
+      const g = sv('g', {class:'bar', tabindex:0, 'data-tip':tip({type:'call', call:c, turn, t0})}); line.dataset.tip = g.dataset.tip;
+      if (q) {
+        const first = Number.isFinite(q.first_token) ? q.first_token : q.end;
+        g.append(sv('rect', {x:X(q.start), y:by, width:Math.max(2, X(first) - X(q.start)), height:bh, class:'wait', rx:2, 'data-seg':'wait'}));
+        if (q.end > first) g.append(sv('rect', {x:X(first), y:by, width:Math.max(2, X(q.end) - X(first)), height:bh, class:'stream', rx:2, 'data-seg':'stream'}));
+        if (u.model_name || u.model) g.append(label(q.start, q.end, u.model_name || u.model, by + 12));
+      } else if (Number.isFinite(c.start)) {
+        const e = end(c.end);
+        g.append(sv('rect', {x:X(c.start), y:by, width:Math.max(2, X(e) - X(c.start)), height:bh, class:'unknown' + (Number.isFinite(c.end) ? '' : ' live'), rx:2}));
+      }
+      bars.append(g);
+    } else if (r.kind === 'tool') {
+      // Gated tools are drawn from the end of their approval band: until then they were waiting
+      // for permission, not running. The tooltip keeps the SDK's reported start.
+      const t = r.tool, e = end(t.end), failed = t.success === false, s0 = Math.min(Math.max(t.start, shown.get(t) ?? t.start), e);
+      line.append(node('span', 'name', t.name), node('span', 'dur', Number.isFinite(t.end) ? secs(t.end - t.start) : live ? 'running' : '—'));
+      if (Number.isFinite(t.start)) {
+        const g = sv('g', {class:'bar', tabindex:0, 'data-tip':tip({type:'tool', tool:t, t0, calls})}); line.dataset.tip = g.dataset.tip;
+        g.append(sv('rect', {x:X(s0), y:by, width:Math.max(3, X(e) - X(s0)), height:bh, class:'tool' + (failed ? ' fail' : '') + (Number.isFinite(t.end) ? '' : ' live'), rx:2}), label(s0, e, t.name, by + 12));
+        bars.append(g);
+        const from = callRow(t.call);
+        if (from && Number.isFinite(t.requested)) arrow(X(t.requested), mid(from), X(s0), mid(r), {type:'request', tool:t, call:from.call});
+        const back = callRow(t.returns_to);
+        if (back && Number.isFinite(t.end) && Number.isFinite(back.call.start)) arrow(X(s0) + Math.max(3, X(t.end) - X(s0)), mid(r), X(back.call.start), mid(back), {type:'return', tool:t, call:back.call, siblings:tools.filter(x => x.returns_to === back.call.index)});
+      }
+    } else {
+      const c = r.compact, e = end(c.end);
+      line.append(node('span', 'name', 'Compaction'), node('span', 'dur', Number.isFinite(c.end) ? secs(c.end - c.start) : 'running'));
+      if (Number.isFinite(c.start)) { const g = sv('g', {class:'bar', tabindex:0, 'data-tip':tip({type:'compact', compact:c, t0})}); line.dataset.tip = g.dataset.tip; g.append(sv('rect', {x:X(c.start), y:by, width:Math.max(3, X(e) - X(c.start)), height:bh, class:'compact', rx:2})); bars.append(g); }
+    }
+    labels.append(line);
+  }
+  svg.append(deps, bars);
+  const chart = node('div', 'tt-chart'); chart.append(svg);
+  const body = node('div', 'tt-body'); body.append(labels, chart);
+  for (const note of turn.notes || []) body.append(node('p', 'tt-note', note));
+  if (turn.error) body.append(node('p', 'tt-note', turn.error));
+  article.append(body);
+  return article;
+}
+function fitTimingLabels(root = $('timing-turns')) {
+  for (const t of root.querySelectorAll('text.in')) if (t.getComputedTextLength() + 8 > Number(t.dataset.room)) t.remove();
+}
+function tip(detail) { const key = String(timing.details.size + 1); timing.details.set(key, detail); return key; }
+function tipRows(rows) {
+  const dl = node('dl');
+  for (const [k, v] of rows) if (v !== undefined && v !== null && v !== '' && v !== '—') dl.append(node('dt', '', k), node('dd', '', String(v)));
+  return dl;
+}
+function sum(values) { const v = values.filter(Number.isFinite); return v.length ? v.reduce((a, b) => a + b, 0) : null; }
+function pct(part, whole) { return Number.isFinite(part) && whole > 0 ? Math.round(part / whole * 100) + '%' : null; }
+function tipContent(d, seg) {
+  const box = document.createDocumentFragment(), at = t => Number.isFinite(t) ? clock(t) + ' (+' + secs(t - d.t0) + ')' : '—';
+  if (d.type === 'turn') {
+    const t = d.turn, calls = t.calls || [], tools = t.tools || [], use = calls.map(c => c.usage || {}), tok = k => sum(use.map(u => u.tokens?.[k]));
+    const models = [...new Set(use.map(u => u.model_name).filter(Boolean))], input = tok('input');
+    const done = tools.filter(x => Number.isFinite(x.end)), longest = done.reduce((a, x) => !a || x.end - x.start > a.end - a.start ? x : a, null);
+    const waited = sum((t.approvals || []).map(g => Number.isFinite(g.resolved) ? g.resolved - g.requested : NaN));
+    box.append(node('h3', '', (t.number ? 'Turn ' + t.number : 'Turn') + (d.live ? ' · in progress' : '')));
+    box.append(tipRows([
+      ['Kind', t.kind === 'prompt' ? null : t.kind],
+      ['Received', Number.isFinite(t.received) ? clock(t.received) : null],
+      ['Before the SDK had it', Number.isFinite(t.received) && Number.isFinite(t.sdk_received) && t.sdk_received >= t.received ? secs(t.sdk_received - t.received) : null],
+      ['First activity', Number.isFinite(d.t0) ? clock(d.t0) : null],
+      ['Last activity', Number.isFinite(t.end) ? at(t.end) : null],
+      ['Settled', Number.isFinite(t.finished) ? clock(t.finished) : null],
+      ['Wall time', Number.isFinite(d.tEnd - d.t0) ? secs(d.tEnd - d.t0) : null],
+      ['Models', models.join(', ')],
+      ['Model requests', calls.length + (sum(use.map(u => u.duration_ms)) != null ? ' · ' + secs(sum(use.map(u => u.duration_ms)) / 1000) + ' total' : '')],
+      ['Tools', tools.length ? tools.length + ' · ' + secs(sum(done.map(x => x.end - x.start)) || 0) + ' summed' + (tools.some(x => x.success === false) ? ' · ' + tools.filter(x => x.success === false).length + ' failed' : '') : null],
+      ['Longest tool', longest ? longest.name + ' · ' + secs(longest.end - longest.start) : null],
+      ['Approvals', (t.approvals || []).length ? t.approvals.length + (waited != null ? ' · ' + secs(waited) + ' waiting' : '') : null],
+      ['Input tokens', input != null ? count(input) + (tok('cache_read') ? ' (' + pct(tok('cache_read'), input) + ' cached)' : '') : null],
+      ['Output tokens', tok('output') != null ? count(tok('output')) + (tok('reasoning') ? ' (' + count(tok('reasoning')) + ' reasoning)' : '') : null],
+      ['Premium requests', sum(use.map(u => u.premium_requests))],
+      ['Status', STATES[t.status] || t.status],
+      ['Error', t.error],
+    ]));
+    if (t.prompt) box.append(node('p', 'tip-note', t.prompt));
+  } else if (d.type === 'idle') {
+    box.append(node('h3', '', 'Idle between turns'));
+    box.append(tipRows([['Previous turn ended', clock(d.from.end)], ['Next turn started', clock(d.to.start)], ['Gap', secs(d.to.start - d.from.end)], ['Next prompt received', Number.isFinite(d.to.received) ? clock(d.to.received) : null]]));
+    box.append(node('p', 'tip-note', (Number.isFinite(d.to.received) && d.to.received < d.from.end ? 'The next prompt was already queued while the previous turn ran. ' : '') + 'No model call or tool was running in this session. The gap is not drawn to scale.'));
+  } else if (d.type === 'request') {
+    const t = d.tool;
+    box.append(node('h3', '', 'Model call ' + d.call.index + ' → ' + t.name));
+    box.append(tipRows([['Requested', at(t.requested)], ['Tool started', at(t.start)], ['Delay', Number.isFinite(t.requested) ? secs(Math.max(0, t.start - t.requested)) : null], ['Approval', t.approval ? 'Yes; the delay includes the wait for an answer' : null]]));
+  } else if (d.type === 'return') {
+    const t = d.tool;
+    box.append(node('h3', '', t.name + ' → Model call ' + d.call.index));
+    box.append(tipRows([['Tool finished', at(t.end)], ['Next model call', at(d.call.start)], ['Delay', secs(Math.max(0, d.call.start - t.end))], ['Results in that call', d.siblings.map(x => x.name).join(', ')]]));
+    if (d.siblings.length > 1) box.append(node('p', 'tip-note', 'The SDK waits for every tool in the batch before calling the model again.'));
+  } else if (d.type === 'call') {
+    const c = d.call, u = c.usage || {}, q = c.request, tok = u.tokens || {};
+    box.append(node('h3', '', 'Model call ' + c.index + (u.model_name ? ' · ' + u.model_name : '')));
+    box.append(tipRows([
+      ['Provider', [u.provider, u.endpoint].filter(Boolean).join(' · ')],
+      ['Started by', u.initiator === 'user' ? 'Your prompt' : u.initiator ? 'Tool results' : null],
+      ['Request start', q ? at(q.start) : null],
+      ['Waiting for first token', u.ttft_ms != null ? secs(u.ttft_ms / 1000) : null],
+      ['Streaming output', q && Number.isFinite(q.first_token) ? secs(q.end - q.first_token) : null],
+      ['Request total', u.duration_ms != null ? secs(u.duration_ms / 1000) : null],
+      ['Between tokens', u.inter_token_ms != null ? u.inter_token_ms.toFixed(1) + ' ms average' : null],
+      ['Input tokens', tok.input != null ? count(tok.input) + (tok.cache_read ? ' (' + count(tok.cache_read) + ' cached)' : '') + (tok.cache_write ? ' · ' + count(tok.cache_write) + ' written to cache' : '') : null],
+      ['Output tokens', tok.output != null ? count(tok.output) + (tok.reasoning ? ' (' + count(tok.reasoning) + ' reasoning)' : '') : null],
+      ['Tool definitions', tok.tools != null ? count(tok.tools) + ' tokens' + (u.available_tools ? ' · ' + u.available_tools + ' tools' : '') : null],
+      ['Context limit', u.max_prompt_tokens ? count(u.max_prompt_tokens) + ' tokens' : null],
+      ['Request size', u.request_bytes != null ? bytes(u.request_bytes) + (u.request_wire_bytes ? ' → ' + bytes(u.request_wire_bytes) + ' ' + (u.request_encoding || '') : '') : null],
+      ['Output rate', q && Number.isFinite(q.first_token) && q.end > q.first_token && tok.output ? Math.round(tok.output / (q.end - q.first_token)) + ' tokens/s' : null],
+      ['Cache hit', pct(tok.cache_read, tok.input)],
+      ['Tools requested', c.tool_requests || null],
+      ['Finish reason', u.finish],
+      ['Reasoning effort', u.effort],
+      ['Premium requests', u.premium_requests],
+      ['Content filter', u.content_filtered ? 'Triggered' : null],
+      ['Cycle', Number.isFinite(c.start) && Number.isFinite(c.end) ? secs(c.end - c.start) + ' including tool time' : null],
+    ]));
+    if (seg === 'wait' || seg === 'stream') box.prepend(node('p', 'tip-note', seg === 'wait' ? 'Pointing at: waiting for the first token' : 'Pointing at: streaming output'));
+    if (q?.placed) box.append(node('p', 'tip-note', 'Placed to end at the recorded response; this older call has no usage timestamp.'));
+    if (!q) box.append(node('p', 'tip-note', 'No usage report was recorded for this call.'));
+  } else if (d.type === 'tool') {
+    const t = d.tool, g = t.approval;
+    box.append(node('h3', '', t.name + (t.skill ? ' · ' + t.skill : '')));
+    box.append(tipRows([
+      ['MCP server', t.server],
+      ['Requested by', Number.isFinite(t.call) ? 'Model call ' + t.call : null],
+      ['Results to', Number.isFinite(t.returns_to) ? 'Model call ' + t.returns_to : null],
+      ['Requested', at(t.requested)],
+      ['Start delay', Number.isFinite(t.requested) && Number.isFinite(t.start) ? secs(Math.max(0, t.start - t.requested)) : null],
+      ['Started', at(t.start)],
+      ['Finished', at(t.end)],
+      ['Duration', Number.isFinite(t.end) ? secs(t.end - t.start) : 'Running'],
+      ['Result', t.success === false ? 'Failed' : t.success ? 'Succeeded' : null],
+      ['Result size', t.result_chars != null ? count(t.result_chars) + ' characters' + (t.result_tokens != null ? ' · ' + count(t.result_tokens) + ' tokens' : '') : null],
+      ['Approval', g ? (g.status === 'approved' ? 'Approved' : g.status === 'denied' ? 'Denied' : g.status === 'expired' ? 'Expired' : 'Waiting') + (Number.isFinite(g.resolved) ? ' after ' + secs(g.resolved - g.requested) : ' · answer time not recorded') : null],
+    ]));
+  } else if (d.type === 'approval') {
+    const k = d.band;
+    box.append(node('h3', '', k.items.length + ' approval request' + (k.items.length === 1 ? '' : 's')));
+    box.append(tipRows(k.items.map(g => [g.tool || g.kind || 'Tool', (g.status === 'pending' ? 'Waiting' : g.status) + (Number.isFinite(g.resolved) ? ' after ' + secs(g.resolved - g.requested) : '')])));
+    box.append(node('p', 'tip-note', k.wait == null ? 'The answer time was not recorded, so no time is removed: later times shift by the band width only.' : 'Waited ' + secs(k.wait) + ' for an answer. That time is collapsed into the band.'));
+  } else {
+    const c = d.compact;
+    box.append(node('h3', '', 'Compaction'));
+    box.append(tipRows([['Started', at(c.start)], ['Finished', at(c.end)], ['Duration', Number.isFinite(c.end) ? secs(c.end - c.start) : 'Running'], ['Result', c.success === false ? 'Failed' : c.success ? 'Succeeded' : null]]));
+  }
+  return box;
+}
+function showTip(target, x, y, seg) {
+  const d = timing.details.get(target.dataset.tip); if (!d) return;
+  const el = $('timing-tip'); el.replaceChildren(tipContent(d, seg)); el.hidden = false;
+  const r = el.getBoundingClientRect();
+  el.style.left = Math.max(8, Math.min(x + 14, innerWidth - r.width - 8)) + 'px';
+  el.style.top = (y + 16 + r.height > innerHeight - 8 ? Math.max(8, y - r.height - 12) : y + 16) + 'px';
+}
+function hideTip() { $('timing-tip').hidden = true; }
+$('timing-turns').addEventListener('pointermove', e => { const t = e.target.closest?.('[data-tip]'); if (t) showTip(t, e.clientX, e.clientY, e.target.dataset?.seg); else hideTip(); });
+$('timing-turns').addEventListener('pointerleave', hideTip);
+$('timing-turns').addEventListener('focusin', e => { const t = e.target.closest?.('[data-tip]'); if (t) { const r = t.getBoundingClientRect(); showTip(t, r.left, r.bottom); } });
+$('timing-turns').addEventListener('focusout', hideTip);
+$('timing-scroll').addEventListener('scroll', () => { hideTip(); const s = $('timing-scroll'); if (timing.more && s.scrollTop < 120 && timing.order.length) loadTiming(timing.ctx, false, timing.order[0]); }, {passive:true});
+$('timing-older').onclick = () => timing.order.length && loadTiming(timing.ctx, false, timing.order[0]);
+$('timing-toggle').onclick = () => setTimingOpen(!timing.open);
+$('timing-close').onclick = () => setTimingOpen(false, true);
+function zoomTiming(dir) {
+  const i = Math.max(0, Math.min(ZOOMS.length - 1, ZOOMS.indexOf(timingZoom) + dir));
+  if (ZOOMS[i] === timingZoom) return;
+  timingZoom = ZOOMS[i]; try { localStorage.setItem('ms-durable.timing-zoom', String(timingZoom)); } catch {}
+  drawTiming(); fitTimingLabels();
+}
+$('timing-zoom-in').onclick = () => zoomTiming(1);
+$('timing-zoom-out').onclick = () => zoomTiming(-1);
+new MutationObserver(() => fitTimingLabels()).observe($('timing-turns'), {childList:true});
 if (matchMedia('(pointer:fine)').matches) $('prompt').placeholder = 'Message · Shift+Enter for a new line';
 window.addEventListener('pagehide', () => { bootController?.abort(); detach(); });
 window.addEventListener('pageshow', event => { if (event.persisted) connect(); });

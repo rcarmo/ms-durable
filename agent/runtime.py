@@ -28,6 +28,7 @@ from .plans import PlanInput
 from .providers import Providers
 from .session_fs import SQLiteSessionFS
 from .store import Store, uid
+from .timing import parse_time
 
 log = logging.getLogger(__name__)
 
@@ -980,7 +981,7 @@ class Runtime:
         try:
             async with self.store.transaction() as db:
                 await db.execute(
-                    "INSERT INTO approvals VALUES(?,?,?,?,?,?)",
+                    "INSERT INTO approvals(id,session_id,turn_id,request,status,created_at) VALUES(?,?,?,?,?,?)",
                     (aid, sid, turn_id, json.dumps(raw, default=str), "pending", time.time()),
                 )
                 await db.execute(
@@ -998,7 +999,8 @@ class Runtime:
             self.approval_keys.pop(aid, None)
             async with self.store.transaction() as db:
                 updated = await db.execute(
-                    "UPDATE approvals SET status='expired' WHERE id=? AND status='pending'", (aid,)
+                    "UPDATE approvals SET status='expired',resolved_at=? WHERE id=? AND status='pending'",
+                    (time.time(), aid),
                 )
                 if updated.rowcount:
                     await db.execute(
@@ -1013,8 +1015,8 @@ class Runtime:
                 raise ValueError("Approval is no longer active")
             async with self.store.transaction() as db:
                 updated = await db.execute(
-                    "UPDATE approvals SET status=? WHERE id=? AND status='pending' RETURNING session_id,turn_id",
-                    ("approved" if allow else "denied", aid),
+                    "UPDATE approvals SET status=?,resolved_at=? WHERE id=? AND status='pending' RETURNING session_id,turn_id",
+                    ("approved" if allow else "denied", time.time(), aid),
                 )
                 if row := await updated.fetchone():
                     await db.execute(
@@ -1190,7 +1192,12 @@ class Runtime:
                                 )
                             ) or kind in {"session.idle", "session.error"}:
                                 await self.store.event(
-                                    sid, turn_id, kind, raw.get("data", {}), raw.get("id")
+                                    sid,
+                                    turn_id,
+                                    kind,
+                                    raw.get("data", {}),
+                                    raw.get("id"),
+                                    parse_time(raw.get("timestamp")),
                                 )
                         finally:
                             event_queue.task_done()

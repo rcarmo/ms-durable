@@ -444,6 +444,13 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
         page = items[:limit]
         return {"events": page, "next_after": page[-1]["seq"] if len(items) > limit else None}
 
+    @app.get("/api/sessions/{sid}/timing", dependencies=[Depends(auth)])
+    async def turn_timing(sid: str, before: str | None = None, limit: int = Query(20, ge=1, le=50)):
+        try:
+            return await app.state.store.timing(sid, before, limit)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc.args[0]) if exc.args else "Not found") from None
+
     @app.get("/api/sessions/{sid}/context", dependencies=[Depends(auth)])
     async def context(sid: str):
         try:

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import aiosqlite
 
+from . import timing
 from .media import MAX_SHARED, SHARED_CHUNK
 
 # External-content FTS stores postings, not a second copy of the timeline.
@@ -146,6 +147,20 @@ CREATE TABLE IF NOT EXISTS sdk_files(
             await self.db.execute(
                 "ALTER TABLE sessions ADD COLUMN delegation_enabled INTEGER NOT NULL DEFAULT 0"
             )
+        columns = await (await self.db.execute("PRAGMA table_info(events)")).fetchall()
+        if "ts" not in {row["name"] for row in columns}:
+            # Event time (Unix seconds). SDK events keep the SDK timestamp; host events get
+            # their insert time. Rows written before this column existed stay NULL.
+            await self.db.execute("ALTER TABLE events ADD COLUMN ts REAL")
+        await self.db.execute(
+            "CREATE TRIGGER IF NOT EXISTS events_ts AFTER INSERT ON events WHEN new.ts IS NULL "
+            "BEGIN UPDATE events SET ts=(julianday('now')-2440587.5)*86400.0 WHERE seq=new.seq; END"
+        )
+        columns = await (await self.db.execute("PRAGMA table_info(approvals)")).fetchall()
+        if "resolved_at" not in {row["name"] for row in columns}:
+            # When the person answered; earlier rows keep NULL rather than a guessed time.
+            await self.db.execute("ALTER TABLE approvals ADD COLUMN resolved_at REAL")
+        columns = await (await self.db.execute("PRAGMA table_info(sessions)")).fetchall()
         if "description" not in {row["name"] for row in columns}:
             await self.db.execute(
                 "ALTER TABLE sessions ADD COLUMN description TEXT NOT NULL DEFAULT ''"
@@ -163,7 +178,10 @@ CREATE TABLE IF NOT EXISTS sdk_files(
         await self.db.execute(
             "UPDATE turns SET status='cancelled', error='Delegating turn stopped before delivery.' WHERE kind='delegation' AND status='queued'"
         )
-        await self.db.execute("UPDATE approvals SET status='expired' WHERE status='pending'")
+        await self.db.execute(
+            "UPDATE approvals SET status='expired',resolved_at=? WHERE status='pending'",
+            (time.time(),),
+        )
 
     async def close(self):
         await self.db.close()
@@ -471,11 +489,87 @@ CREATE TABLE IF NOT EXISTS sdk_files(
                     )
             return result
 
-    async def event(self, sid, tid, kind, data, sdk_id=None):
+    async def event(self, sid, tid, kind, data, sdk_id=None, ts=None):
         await self.execute(
-            "INSERT OR IGNORE INTO events(session_id,turn_id,sdk_id,type,data) VALUES(?,?,?,?,?)",
-            (sid, tid, sdk_id, kind, json.dumps(data, default=str)),
+            "INSERT OR IGNORE INTO events(session_id,turn_id,sdk_id,type,data,ts) VALUES(?,?,?,?,?,?)",
+            (sid, tid, sdk_id, kind, json.dumps(data, default=str), ts),
         )
+
+    async def timing(self, sid, before=None, limit=20):
+        """Timing records for up to ``limit`` turns, oldest first, ending before ``before``."""
+        async with self.transaction(write=False) as db:
+
+            async def rows(sql, args=()):
+                cursor = await db.execute(sql, args)
+                return [dict(row) for row in await cursor.fetchall()]
+
+            if not await rows("SELECT 1 FROM sessions WHERE id=?", (sid,)):
+                raise KeyError("Unknown session")
+            cursor = ""
+            args = [sid]
+            if before:
+                anchor = await rows(
+                    "SELECT created_at FROM turns WHERE id=? AND session_id=?", (before, sid)
+                )
+                if not anchor:
+                    raise KeyError("Unknown turn")
+                cursor = " AND (created_at<? OR (created_at=? AND id<?))"
+                args += [anchor[0]["created_at"], anchor[0]["created_at"], before]
+            turns = await rows(
+                "SELECT id,kind,status,prompt,error,created_at,finished_at FROM turns "
+                "WHERE session_id=?" + cursor + " ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*args, limit + 1),
+            )
+            more = len(turns) > limit
+            turns = list(reversed(turns[:limit]))
+            if not turns:
+                return {"turns": [], "more": False}
+            first = turns[0]
+            older = await rows(
+                "SELECT COUNT(*) AS n FROM turns WHERE session_id=? AND (created_at<? OR (created_at=? AND id<?))",
+                (sid, first["created_at"], first["created_at"], first["id"]),
+            )
+            for number, turn in enumerate(turns, older[0]["n"] + 1):
+                turn["number"] = number
+            ids = [t["id"] for t in turns]
+            marks = ",".join("?" * len(ids))
+            kinds = ",".join("?" * len(timing.TYPES))
+            events = await rows(
+                f"SELECT turn_id,sdk_id,type,data,ts FROM events WHERE session_id=? AND turn_id IN ({marks}) "
+                f"AND type IN ({kinds}) ORDER BY seq",
+                (sid, *ids, *timing.TYPES),
+            )
+            approvals = await rows(
+                f"SELECT turn_id,request,status,created_at,resolved_at FROM approvals WHERE turn_id IN ({marks}) ORDER BY created_at",
+                tuple(ids),
+            )
+            times = {}
+            if any(e["ts"] is None and e["sdk_id"] for e in events):
+                log = await rows(
+                    "SELECT content,mtime FROM sdk_files WHERE namespace=? AND path='/session-state/events.jsonl'",
+                    (sid,),
+                )
+                if log:
+                    times = self._transcript_times(sid, log[0]["mtime"], log[0]["content"])
+        grouped = {tid: [] for tid in ids}
+        for event in events:
+            event["data"] = json.loads(event["data"])
+            grouped[event["turn_id"]].append(event)
+        gates = {tid: [] for tid in ids}
+        for approval in approvals:
+            gates[approval["turn_id"]].append(approval)
+        return {
+            "turns": [timing.build_turn(t, grouped[t["id"]], gates[t["id"]], times) for t in turns],
+            "more": more,
+        }
+
+    def _transcript_times(self, sid, mtime, content):
+        # Parsing a large native log is the slow part; reuse it until the file changes.
+        cache = self.__dict__.setdefault("_timing_cache", {})
+        key = (sid, mtime, len(content or b""))
+        if cache.get(sid, (None,))[0] != key:
+            cache[sid] = (key, timing.transcript_times(content))
+        return cache[sid][1]
 
     async def events(self, sid, after=0, limit=2000):
         rows = await self.rows(

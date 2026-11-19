@@ -216,6 +216,12 @@ async def test_approval_decision_publishes_settlement_for_other_clients(store, t
         snapshot = await store.snapshot(sid)
         assert snapshot["approvals"] == []
         assert [e["type"] for e in await store.events(sid, notification["seq"])] == ["app.approval"]
+        row = await store.one(
+            "SELECT status,created_at,resolved_at FROM approvals WHERE id=?", (pending["id"],)
+        )
+        # The answer time is recorded so a timing view can show how long the person took.
+        assert row["status"] == "denied"
+        assert row["created_at"] <= row["resolved_at"]
     finally:
         if not approval.done():
             approval.cancel()
