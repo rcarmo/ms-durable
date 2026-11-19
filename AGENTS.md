@@ -4,7 +4,7 @@ Python 3.11+, asyncio, FastAPI, aiosqlite; Microsoft Copilot SDK 2.0.1.
 
 Copilot owns inference, agent execution, model switching, transcript recovery, coding tools, AGENTS.md discovery, skills and MCP. Do not reimplement these. Host code owns HTTP authentication, a durable input queue, session catalogue, permission UI, event projection and the SQLite sessionFs adapter. All SDK operations use the public Python APIs.
 
-Use `make install`, `make check`, `make run`. Dependencies are pinned in requirements.lock. No JavaScript build is required. Read README.md for safety/recovery limits before changing the lifecycle. VERIFICATION.md records exact test scope and untested paths.
+Use `make install`, `make check`, `make run`. Dependencies are pinned in requirements.lock. No JavaScript build is required. Read README.md for safety/recovery limits before changing the lifecycle. [Verification](docs/reference.md#verification) lists test targets and their scope.
 
 ## Disposable files
 
