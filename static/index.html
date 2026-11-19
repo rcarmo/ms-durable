@@ -315,7 +315,7 @@ svg.timing text{font-family:inherit}.timing .grid{stroke:var(--border);stroke-wi
       <button id="timing-older" type="button" class="quiet" hidden>Load earlier turns</button>
       <div id="timing-turns"></div>
     </div>
-    <div class="timing-legend"><span title="From sending the request until the first output token arrived (SDK timeToFirstTokenMs)"><i style="background:var(--wait)"></i>Waiting for first token</span><span title="From the first output token until the request finished (SDK duration minus time to first token)"><i style="background:var(--stream)"></i>Streaming output</span><span title="Tool execution, from the SDK start event to its completion event"><i style="background:var(--tool)"></i>Tool</span><span><i style="background:var(--fail)"></i>Failed tool</span><span title="Request phases are not available in the recorded events"><i style="background:var(--muted);opacity:.5"></i>Phase unknown</span><span title="Time spent waiting for approval answers is collapsed into a band; times after it are shifted"><i style="background:var(--band);opacity:.5"></i>Approvals (scale shifted)</span><span title="Arrows run from the model call that requested a tool to the tool, and from the tool to the model call that received its result">→ tool request / result</span></div>
+    <div class="timing-legend"><span title="Time until the first output token"><i style="background:var(--wait)"></i>Time to first token</span><span title="Time from the first output token to the end of the request"><i style="background:var(--stream)"></i>Streaming</span><span title="Time between tool start and completion"><i style="background:var(--tool)"></i>Tool</span><span><i style="background:var(--fail)"></i>Failed tool</span><span title="Request phases are not available in the recorded events"><i style="background:var(--muted);opacity:.5"></i>Phase unknown</span><span title="Time spent waiting for approval answers is collapsed into a band; times after it are shifted"><i style="background:var(--band);opacity:.5"></i>Approval wait</span><span title="Arrows connect a tool to its requesting call and to the next recorded model call">→ tool request / next call</span></div>
   </section>
   </div>
 </main>
@@ -1608,7 +1608,7 @@ function drawTiming() {
   const items = []; let previous = null;
   for (const id of timing.order) {
     const turn = timing.turns.get(id); if (!turn) continue;
-    if (previous && Number.isFinite(previous.end) && Number.isFinite(turn.start) && turn.start - previous.end > 1) { const gap = node('p', 'idle-gap', 'idle · ' + secs(turn.start - previous.end)); gap.dataset.tip = tip({type:'idle', from:previous, to:turn}); items.push(gap); }
+    if (previous && Number.isFinite(previous.end) && Number.isFinite(turn.start) && turn.start - previous.end > 1) { const gap = node('p', 'idle-gap', 'gap · ' + secs(turn.start - previous.end)); gap.dataset.tip = tip({type:'idle', from:previous, to:turn}); items.push(gap); }
     items.push(drawTimingTurn(turn, collapsed.has(id))); previous = turn;
   }
   box.replaceChildren(...items);
@@ -1644,7 +1644,6 @@ function drawTimingTurn(turn, collapsed) {
   if (Number.isFinite(t0) && Number.isFinite(tEnd)) meta.push(secs(tEnd - t0));
   meta.push(calls.length + ' model call' + (calls.length === 1 ? '' : 's'), tools.length + ' tool' + (tools.length === 1 ? '' : 's'));
   if (gates.length) meta.push(gates.length + ' approval' + (gates.length === 1 ? '' : 's'));
-  if (Number.isFinite(turn.received) && Number.isFinite(turn.sdk_received) && turn.sdk_received > turn.received) meta.push(secs(turn.sdk_received - turn.received) + ' before the SDK received the prompt');
   const name = (turn.number ? 'Turn ' + turn.number : 'Turn') + (turn.kind === 'compact' ? ' · compaction' : '');
   const title = node('span', 'tt-prompt'), caret = node('span', 'tt-caret', collapsed ? '▸' : '▾');
   caret.setAttribute('aria-hidden', 'true');
@@ -1764,7 +1763,7 @@ function drawTimingTurn(turn, collapsed) {
     const by = r.y + 5, bh = RH - 10, line = node('div', r.kind);
     if (r.kind === 'call') {
       const c = r.call, u = c.usage || {}, q = c.request;
-      line.append(node('span', 'name', 'Model call ' + c.index), node('span', 'sub', u.initiator === 'user' ? 'prompt' : u.initiator ? 'tool results' : ''), node('span', 'dur', q ? secs(q.end - q.start) : live && !Number.isFinite(c.end) ? 'running' : '—'));
+      line.append(node('span', 'name', 'Model call ' + c.index), node('span', 'sub', u.initiator === 'user' ? 'prompt' : ''), node('span', 'dur', q ? secs(q.end - q.start) : live && !Number.isFinite(c.end) ? 'running' : '—'));
       const g = sv('g', {class:'bar', tabindex:0, 'data-tip':tip({type:'call', call:c, turn, t0})}); line.dataset.tip = g.dataset.tip;
       if (q) {
         const x = X(q.start), right = Math.max(x+2,X(q.end));
@@ -1801,7 +1800,7 @@ function drawTimingTurn(turn, collapsed) {
         label(g,r,t.name); bars.append(g);
         const from = callRow(t.call), back = callRow(t.returns_to);
         if (from && Number.isFinite(t.requested)) links.push([from,r,{type:'request',tool:t,call:from.call,t0}]);
-        if (back && Number.isFinite(t.end)) links.push([r,back,{type:'return',tool:t,call:back.call,siblings:tools.filter(x => x.returns_to === back.call.index),t0}]);
+        if (back && Number.isFinite(t.end)) links.push([r,back,{type:'return',tool:t,call:back.call,t0}]);
       }
     } else {
       const c = r.compact, e = end(c.end,c.start);
@@ -1841,11 +1840,10 @@ function tipContent(d, seg) {
     box.append(tipRows([
       ['Kind', t.kind === 'prompt' ? null : t.kind],
       ['Received', Number.isFinite(t.received) ? clock(t.received) : null],
-      ['Before the SDK had it', Number.isFinite(t.received) && Number.isFinite(t.sdk_received) && t.sdk_received >= t.received ? secs(t.sdk_received - t.received) : null],
       ['First activity', Number.isFinite(d.t0) ? clock(d.t0) : null],
       ['Last activity', Number.isFinite(t.end) ? at(t.end) : null],
-      ['Settled', Number.isFinite(t.finished) ? clock(t.finished) : null],
-      ['Wall time', Number.isFinite(d.tEnd - d.t0) ? secs(d.tEnd - d.t0) : null],
+      ['Finished', Number.isFinite(t.finished) ? clock(t.finished) : null],
+      ['Elapsed', Number.isFinite(d.tEnd - d.t0) ? secs(d.tEnd - d.t0) : null],
       ['Models', models.join(', ')],
       ['Model requests', calls.length + (sum(use.map(u => u.duration_ms)) != null ? ' · ' + secs(sum(use.map(u => u.duration_ms)) / 1000) + ' total' : '')],
       ['Tools', tools.length ? tools.length + ' · ' + secs(sum(done.map(x => x.end - x.start)) || 0) + ' summed' + (tools.some(x => x.success === false) ? ' · ' + tools.filter(x => x.success === false).length + ' failed' : '') : null],
@@ -1859,53 +1857,50 @@ function tipContent(d, seg) {
     ]));
     if (t.prompt) box.append(node('p', 'tip-note', t.prompt));
   } else if (d.type === 'idle') {
-    box.append(node('h3', '', 'Idle between turns'));
+    box.append(node('h3', '', 'Gap between turns'));
     box.append(tipRows([['Previous turn ended', clock(d.from.end)], ['Next turn started', clock(d.to.start)], ['Gap', secs(d.to.start - d.from.end)], ['Next prompt received', Number.isFinite(d.to.received) ? clock(d.to.received) : null]]));
-    box.append(node('p', 'tip-note', (Number.isFinite(d.to.received) && d.to.received < d.from.end ? 'The next prompt was already queued while the previous turn ran. ' : '') + 'No model call or tool was running in this session. The gap is not drawn to scale.'));
   } else if (d.type === 'request') {
     const t = d.tool;
     box.append(node('h3', '', 'Model call ' + d.call.index + ' → ' + t.name));
-    box.append(tipRows([['Requested', at(t.requested)], ['Tool started', at(t.start)], ['Delay', Number.isFinite(t.requested) ? secs(Math.max(0, t.start - t.requested)) : null], ['Approval', t.approval ? 'Yes; the delay includes the wait for an answer' : null]]));
+    box.append(tipRows([['Requested', at(t.requested)], ['Tool started', at(t.start)], ['Delay', Number.isFinite(t.requested) ? secs(Math.max(0, t.start - t.requested)) : null], ['Approval', t.approval?.status]]));
   } else if (d.type === 'return') {
     const t = d.tool;
     box.append(node('h3', '', t.name + ' → Model call ' + d.call.index));
-    box.append(tipRows([['Tool finished', at(t.end)], ['Next model call', at(d.call.start)], ['Request sent', d.call.request ? at(d.call.request.start) : null], ['Delay', secs(Math.max(0, d.call.start - t.end))], ['Results in that call', d.siblings.map(x => x.name).join(', ')]]));
-    if (d.siblings.length > 1) box.append(node('p', 'tip-note', 'The SDK waits for every tool in the batch before calling the model again.'));
+    box.append(tipRows([['Tool finished', at(t.end)], ['Next model call', at(d.call.start)], ['Request start (estimated)', d.call.request ? at(d.call.request.start) : null], ['Delay', secs(Math.max(0, d.call.start - t.end))]]));
   } else if (d.type === 'call') {
     const c = d.call, u = c.usage || {}, q = c.request, tok = u.tokens || {};
     box.append(node('h3', '', 'Model call ' + c.index + (u.model_name ? ' · ' + u.model_name : '')));
     box.append(tipRows([
       ['Provider', [u.provider, u.endpoint].filter(Boolean).join(' · ')],
-      ['Started by', u.initiator === 'user' ? 'Your prompt' : u.initiator ? 'Tool results' : null],
-      ['Request start', q ? at(q.start) : null],
-      ['Waiting for first token', u.ttft_ms != null ? secs(u.ttft_ms / 1000) : null],
-      ['Streaming output', q && Number.isFinite(q.first_token) ? secs(q.end - q.first_token) : null],
-      ['Request total', u.duration_ms != null ? secs(u.duration_ms / 1000) : null],
-      ['Between tokens', u.inter_token_ms != null ? u.inter_token_ms.toFixed(1) + ' ms average' : null],
+      ['Started by', u.initiator === 'user' ? 'Your prompt' : u.initiator],
+      ['Request start (estimated)', q ? at(q.start) : null],
+      ['Time to first token', u.ttft_ms != null ? secs(u.ttft_ms / 1000) : null],
+      ['Streaming', q && Number.isFinite(q.first_token) ? secs(q.end - q.first_token) : null],
+      ['Request duration', u.duration_ms != null ? secs(u.duration_ms / 1000) : null],
+      ['Mean token interval', u.inter_token_ms != null ? u.inter_token_ms.toFixed(1) + ' ms' : null],
       ['Input tokens', tok.input != null ? count(tok.input) + (tok.cache_read ? ' (' + count(tok.cache_read) + ' cached)' : '') + (tok.cache_write ? ' · ' + count(tok.cache_write) + ' written to cache' : '') : null],
       ['Output tokens', tok.output != null ? count(tok.output) + (tok.reasoning ? ' (' + count(tok.reasoning) + ' reasoning)' : '') : null],
       ['Tool definitions', tok.tools != null ? count(tok.tools) + ' tokens' + (u.available_tools ? ' · ' + u.available_tools + ' tools' : '') : null],
-      ['Context limit', u.max_prompt_tokens ? count(u.max_prompt_tokens) + ' tokens' : null],
+      ['Prompt limit', u.max_prompt_tokens ? count(u.max_prompt_tokens) + ' tokens' : null],
       ['Request size', u.request_bytes != null ? bytes(u.request_bytes) + (u.request_wire_bytes ? ' → ' + bytes(u.request_wire_bytes) + ' ' + (u.request_encoding || '') : '') : null],
       ['Output rate', q && Number.isFinite(q.first_token) && q.end > q.first_token && tok.output ? Math.round(tok.output / (q.end - q.first_token)) + ' tokens/s' : null],
-      ['Cache hit', pct(tok.cache_read, tok.input)],
+      ['Cached input', pct(tok.cache_read, tok.input)],
       ['Tools requested', c.tool_requests || null],
       ['Finish reason', u.finish],
       ['Reasoning effort', u.effort],
       ['Premium requests', u.premium_requests],
       ['Content filter', u.content_filtered ? 'Triggered' : null],
-      ['Cycle', Number.isFinite(c.start) && Number.isFinite(c.end) ? secs(c.end - c.start) + ' including tool time' : null],
     ]));
-    if (seg === 'wait' || seg === 'stream') box.prepend(node('p', 'tip-note', seg === 'wait' ? 'Pointing at: waiting for the first token' : 'Pointing at: streaming output'));
-    if (q?.placed) box.append(node('p', 'tip-note', 'Placed to end at the recorded response; this older call has no usage timestamp.'));
-    if (!q) box.append(node('p', 'tip-note', 'No usage report was recorded for this call.'));
+    if (seg === 'wait' || seg === 'stream') box.prepend(node('p', 'tip-note', seg === 'wait' ? 'First-token wait' : 'Streaming'));
+    if (q?.placed) box.append(node('p', 'tip-note', 'Bar position estimated from the response time.'));
+    if (!q) box.append(node('p', 'tip-note', 'Request timing unavailable.'));
   } else if (d.type === 'tool') {
     const t = d.tool, g = t.approval;
     box.append(node('h3', '', t.name + (t.skill ? ' · ' + t.skill : '')));
     box.append(tipRows([
       ['MCP server', t.server],
       ['Requested by', Number.isFinite(t.call) ? 'Model call ' + t.call : null],
-      ['Results to', Number.isFinite(t.returns_to) ? 'Model call ' + t.returns_to : null],
+      ['Next model call', Number.isFinite(t.returns_to) ? 'Model call ' + t.returns_to : null],
       ['Requested', at(t.requested)],
       ['Start delay', Number.isFinite(t.requested) && Number.isFinite(t.start) ? secs(Math.max(0, t.start - t.requested)) : null],
       ['Started', at(t.start)],
@@ -1913,13 +1908,13 @@ function tipContent(d, seg) {
       ['Duration', Number.isFinite(t.end) ? secs(t.end - t.start) : 'Running'],
       ['Result', t.success === false ? 'Failed' : t.success ? 'Succeeded' : null],
       ['Result size', t.result_chars != null ? count(t.result_chars) + ' characters' + (t.result_tokens != null ? ' · ' + count(t.result_tokens) + ' tokens' : '') : null],
-      ['Approval', g ? (g.status === 'approved' ? 'Approved' : g.status === 'denied' ? 'Denied' : g.status === 'expired' ? 'Expired' : 'Waiting') + (Number.isFinite(g.resolved) ? ' after ' + secs(g.resolved - g.requested) : ' · answer time not recorded') : null],
+      ['Approval', g ? (g.status === 'approved' ? 'Approved' : g.status === 'denied' ? 'Denied' : g.status === 'expired' ? 'Expired' : 'Waiting') + (Number.isFinite(g.resolved) ? ' after ' + secs(g.resolved - g.requested) : g.status === 'pending' ? '' : ' · duration unknown') : null],
     ]));
   } else if (d.type === 'approval') {
     const k = d.band;
     box.append(node('h3', '', k.items.length + ' approval request' + (k.items.length === 1 ? '' : 's')));
     box.append(tipRows(k.items.map(g => [g.tool || g.kind || 'Tool', (g.status === 'pending' ? 'Waiting' : g.status) + (Number.isFinite(g.resolved) ? ' after ' + secs(g.resolved - g.requested) : '')])));
-    box.append(node('p', 'tip-note', k.wait == null ? 'The answer time was not recorded, so no time is removed: later times shift by the band width only.' : secs(k.wait) + ' of recorded wait across these requests. Overlapping time is counted once.'));
+    box.append(node('p', 'tip-note', k.wait == null ? 'Approval duration unknown.' : secs(k.wait) + ' elapsed wait.'));
   } else {
     const c = d.compact;
     box.append(node('h3', '', 'Compaction'));

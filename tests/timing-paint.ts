@@ -5,10 +5,12 @@ export async function timingPaint(page: Page, url: string, root: string, theme: 
   const gate = {index:0,requested:105,resolved:112,status:'approved',tool:'write'};
   const call = (index:number,start:number,first:number|null,end:number) => ({index,start:start-.2,end,response:end,request:{start,first_token:first,end},usage:{model_name:'Example model'}});
   const tool = (name:string,start:number,end:number,extra={}) => ({name,start,end,requested:102,call:1,returns_to:2,success:true,...extra});
-  const turn = {id:'paint',number:1,kind:'prompt',prompt:'Parallel tools and a measured approval',status:'done',start:100,end:118,calls:[call(1,100,101,102),call(2,114.02,null,118)],tools:[tool('read',102.01,104),tool('inspect',102.02,114),tool('write',105,114.01,{approvals:[0],approval:gate}),tool('fast failure',102.03,102.031,{success:false})],approvals:[gate]};
+  const turn = {id:'paint',number:1,received:97,sdk_received:100,kind:'prompt',prompt:'Parallel tools and a measured approval',status:'done',start:100,end:118,calls:[call(1,100,101,102),call(2,114.02,null,118)],tools:[tool('read',102.01,104),tool('inspect',102.02,114),tool('write',105,114.01,{approvals:[0],approval:gate}),tool('fast failure',102.03,102.031,{success:false})],approvals:[gate]};
   await page.route('**/api/sessions/*/timing*',r=>r.fulfill({json:{turns:[turn],more:false}}));
   await page.goto(url+'#token=synthetic-ui-token'); await page.locator('#timing-toggle').click();
   const chart = page.locator('.tt-chart svg.timing'); await chart.waitFor();
+  const heading=page.locator('.tt-head'); await heading.hover();
+  if(/SDK|before the .*prompt/i.test(await heading.innerText()+' '+await page.locator('#timing-tip').innerText()))throw Error('Turn timing implies an unmeasured prompt handoff');
   const scales=[6.25,12.5,25,50,100,200];
   for(const z of scales){
     while(parseFloat(await page.locator('#timing-scale').innerText())!==z){const current=parseFloat(await page.locator('#timing-scale').innerText());await page.locator(current>z?'#timing-zoom-out':'#timing-zoom-in').click();}

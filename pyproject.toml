@@ -1,6 +1,6 @@
 [project]
 name = "ms-durable"
-version = "0.2.2"
+version = "0.2.3"
 license = {file = "LICENSE"}
 description = "A small asyncio/FastAPI UI for the Microsoft Copilot harness"
 requires-python = ">=3.11"
