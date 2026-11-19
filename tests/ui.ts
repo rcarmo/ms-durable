@@ -1,5 +1,6 @@
 /** Deterministic UI test against a fixture API. No model calls; run via make test-ui. */
 import { chromium, type Page } from 'playwright';
+import { timingPaint } from './timing-paint';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -153,6 +154,7 @@ try {
       } finally { unblock(); }
     });
   } else {
+  for (const scheme of ['light','dark'] as const) await run('Timing chart paint: '+scheme,{width:1250,height:680},scheme,page=>timingPaint(page,url,root,scheme));
   await run('desktop dark: transcript, activity, approval, context', {width: 1280, height: 860}, 'dark', async page => {
     await page.goto(url);
     await page.screenshot({path: root + '/auth.png'});

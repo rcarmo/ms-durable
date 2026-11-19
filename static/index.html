@@ -189,7 +189,7 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 .tt-head .tt-prompt{display:flex;gap:6px;align-items:baseline;min-width:0;white-space:nowrap}.tt-caret{width:1em;color:var(--muted)}.tt-excerpt{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
 .tt-head .tt-meta{display:block;color:var(--muted);font-size:12px}
 .tt[data-collapsed] .tt-body{display:none}.tt[data-collapsed] .tt-head{border-radius:6px}
-.tt-body{display:grid;grid-template-columns:var(--tt-labels,230px) minmax(0,1fr)}
+.tt-body{display:grid;grid-template-columns:min(var(--tt-labels,230px),38%) minmax(0,1fr)}
 .tt-labels{border-inline-end:1px solid var(--border);font-size:12.5px}
 .tt-labels div{display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;border-top:1px solid var(--border);white-space:nowrap}
 .tt-labels div:first-child{height:24px;border-top:0;color:var(--muted);font-size:11px}
@@ -199,11 +199,11 @@ dialog ul{list-style:none;margin:0;padding:0;font-size:.88rem}dialog li{display:
 .tt-note{color:var(--muted);font-size:12px;padding:4px 10px 6px;grid-column:1/-1;border-top:1px solid var(--border)}
 .idle-gap{color:var(--muted);font-size:11px;text-align:center;margin:0 0 6px;letter-spacing:.04em}
 svg.timing text{font-family:inherit}.timing .grid{stroke:var(--border);stroke-width:1;opacity:.6}.timing .tick{font-size:10px;fill:var(--muted)}
-.timing .row{stroke:var(--border);opacity:.6}.timing .dep{fill:none;stroke:var(--muted);stroke-width:1;opacity:.6}.timing .dephit{fill:none;stroke:transparent;stroke-width:9;pointer-events:stroke}.timing .link:hover .dep{stroke:var(--text);opacity:1}.tt-labels [data-tip]:hover{background:var(--hover)}.idle-gap[data-tip]{cursor:default}.timing .arh{fill:var(--muted)}
+.timing .row{stroke:var(--border);opacity:.6}.timing .dep{fill:none;stroke:var(--muted);stroke-width:1}.timing .dephit{fill:none;stroke:transparent;stroke-width:9;pointer-events:stroke}.timing .link:hover .dep{stroke:var(--text);opacity:1}.tt-labels [data-tip]:hover{background:var(--hover)}.idle-gap[data-tip]{cursor:default}.timing .arh{fill:var(--muted)}
 .timing .bar{cursor:default}.timing .bar:focus{outline:none}.timing .bar:focus-visible rect,.timing .bar:hover rect{stroke:var(--text);stroke-width:1}
 .timing .wait{fill:var(--wait)}.timing .stream{fill:var(--stream)}.timing .unknown{fill:var(--muted);opacity:.5}.timing .tool{fill:var(--tool)}.timing .tool.fail{fill:var(--fail)}.timing .compact{fill:var(--accent)}
 .timing .live{opacity:.65}.timing .in{font-size:10.5px;font-weight:650;fill:#fff;pointer-events:none}
-.timing .brk{fill:var(--band);stroke:var(--band);opacity:.5}.timing .brkt{font-size:11px;font-weight:700;fill:var(--text);text-anchor:middle;pointer-events:none}
+.timing .brk{fill:var(--band);stroke:var(--band);opacity:.5}.timing .brkt{paint-order:stroke;stroke:var(--bg);stroke-width:2px;stroke-linejoin:round;font-size:11px;font-weight:700;fill:var(--text);text-anchor:middle;pointer-events:none}
 .timing-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted);padding:6px 16px;border-top:1px solid var(--border)}
 .timing-legend i{display:inline-block;width:12px;height:8px;border-radius:2px;margin-inline-end:4px}
 #timing-tip{position:fixed;z-index:20;max-width:min(420px,90vw);background:var(--raised);color:var(--text);border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 24px rgb(0 0 0/.3);padding:8px 10px;font-size:12.5px;pointer-events:none}
@@ -315,7 +315,7 @@ svg.timing text{font-family:inherit}.timing .grid{stroke:var(--border);stroke-wi
       <button id="timing-older" type="button" class="quiet" hidden>Load earlier turns</button>
       <div id="timing-turns"></div>
     </div>
-    <div class="timing-legend"><span title="From sending the request until the first output token arrived (SDK timeToFirstTokenMs)"><i style="background:var(--wait)"></i>Waiting for first token</span><span title="From the first output token until the request finished (SDK duration minus time to first token)"><i style="background:var(--stream)"></i>Streaming output</span><span title="Tool execution, from the SDK start event to its completion event"><i style="background:var(--tool)"></i>Tool</span><span><i style="background:var(--fail)"></i>Failed tool</span><span title="Time spent waiting for approval answers is collapsed into a band; times after it are shifted"><i style="background:var(--band);opacity:.5"></i>Approvals (scale shifted)</span><span title="Arrows run from the model call that requested a tool to the tool, and from the tool to the model call that received its result">→ tool request / result</span></div>
+    <div class="timing-legend"><span title="From sending the request until the first output token arrived (SDK timeToFirstTokenMs)"><i style="background:var(--wait)"></i>Waiting for first token</span><span title="From the first output token until the request finished (SDK duration minus time to first token)"><i style="background:var(--stream)"></i>Streaming output</span><span title="Tool execution, from the SDK start event to its completion event"><i style="background:var(--tool)"></i>Tool</span><span><i style="background:var(--fail)"></i>Failed tool</span><span title="Request phases are not available in the recorded events"><i style="background:var(--muted);opacity:.5"></i>Phase unknown</span><span title="Time spent waiting for approval answers is collapsed into a band; times after it are shifted"><i style="background:var(--band);opacity:.5"></i>Approvals (scale shifted)</span><span title="Arrows run from the model call that requested a tool to the tool, and from the tool to the model call that received its result">→ tool request / result</span></div>
   </section>
   </div>
 </main>
@@ -1648,13 +1648,10 @@ function drawTimingTurn(turn, collapsed) {
   }
   for (const tool of tools.filter(x => !calls.some(c => c.index === x.call))) rows.push({kind:'tool', tool});
   for (const c of turn.compactions || []) rows.push({kind:'compact', compact:c});
-  const end = x => Number.isFinite(x) ? x : (live ? now : tEnd);
+  const end = (x,start) => Number.isFinite(x) ? x : (live ? now : start);
 
-  // Approval bands. The SDK reports a tool as started before it asks for permission, and a
-  // requesting call can still be streaming then, so a band begins at the later of the earliest
-  // start in its batch and the end of that call; it never begins before the previous band.
-  // Gated tools are drawn from the end of their last band: until then they were waiting for
-  // permission, not running. Tooltips keep the SDK's reported times.
+  // Keep the band at the recorded request. A tiny pre-permission tool start is not a
+  // separate execution bar. Keep earlier work visible if a tool asks again later.
   const BREAK = 30, breaks = [], shown = new Map();
   // A request made while an earlier one is still unanswered joins its band.
   const until = g => g.status === 'pending' ? Infinity : Number.isFinite(g.resolved) ? g.resolved : g.requested + 0.5;
@@ -1662,62 +1659,89 @@ function drawTimingTurn(turn, collapsed) {
     const last = breaks.at(-1);
     if (last && g.requested < Math.max(...last.items.map(until))) last.items.push(g); else breaks.push({requested:g.requested, items:[g]});
   }
-  let floor = -Infinity;
   for (const k of breaks) {
     const ids = new Set(k.items.map(g => g.index));
     const gated = tools.filter(x => (x.approvals || []).some(i => ids.has(i)));
-    const batch = new Set(gated.map(x => x.call)), latest = Math.max(k.requested, ...gated.map(x => x.start).filter(Number.isFinite));
-    const starts = tools.filter(x => batch.has(x.call) && Number.isFinite(x.start) && x.start <= latest && x.start > floor).map(x => x.start);
-    const streaming = calls.filter(c => batch.has(c.index) && c.request).map(c => c.request.end);
-    k.t = Math.max(floor + 1e-3, Math.min(k.requested, ...starts), ...streaming);
     const done = k.items.map(g => g.resolved);
-    k.wait = done.every(Number.isFinite) ? Math.max(0, Math.max(...done) - k.t) : (k.items.some(g => g.status === 'pending') ? Math.max(0, now - k.t) : null);
-    floor = k.t + (k.wait ?? 0);
-    for (const x of gated) shown.set(x, floor + 1e-6);
+    // Never count pre-request startup (including parallel tools) as approval time.
+    k.t = k.requested;
+    k.wait = done.every(Number.isFinite) ? Math.max(0, Math.max(...done)-k.t) : (k.items.some(g => g.status === 'pending') ? Math.max(0,now-k.t) : null);
+    for (const x of gated) {
+      const previous = shown.get(x);
+      // Suppress a tiny startup sliver, not legitimate work before a later permission request.
+      if (previous != null || (k.t-x.start)*PX <= 3) shown.set(x,previous ?? Math.max(x.start,k.t+(k.wait ?? 0)+1e-6));
+    }
     k.w = k.wait == null ? BREAK : Math.min(120, BREAK + 14 * Math.log2(Math.max(1, k.wait)));
   }
-  const a = t0 - PAD;
+  const a = t0 - Math.max(PAD, 12 / PX);
   const shift = t => breaks.filter(k => k.t > a && k.t < t).reduce((n, k) => { const w = k.wait ?? 0; return n + (t >= k.t + w ? k.w - w * PX : (w ? (t - k.t) / w * k.w : 0) - (t - k.t) * PX); }, 0);
   const X = t => (t - a) * PX + shift(t);
   for (const k of breaks) k.x = X(k.t);
-  const W = Math.ceil(X(tEnd + PAD)) + 8, H = HH + rows.length * RH;
+  const W = Math.ceil(Math.max(X(tEnd + PAD), ...breaks.map(k => k.x + k.w))) + 18, H = HH + rows.length * RH;
   const svg = sv('svg', {class:'timing', width:W, height:H, viewBox:`0 0 ${W} ${H}`, role:'group', 'aria-label':'Timing chart'});
   const defs = sv('defs'), id = 'arw-' + turn.id.replace(/[^a-z0-9]/gi, '');
-  defs.append(sv('marker', {id, viewBox:'0 0 6 6', refX:5, refY:3, markerWidth:6, markerHeight:6, orient:'auto'}));
+  defs.append(sv('marker', {id, viewBox:'0 0 6 6', refX:6, refY:3, markerWidth:6, markerHeight:6, orient:'auto'}));
   defs.lastChild.append(sv('path', {d:'M0,0L6,3L0,6z', class:'arh'}));
-  const mask = sv('mask', {id:id + '-cut', maskUnits:'userSpaceOnUse', x:0, y:0, width:W, height:H});
-  mask.append(sv('rect', {width:W, height:H, fill:'#fff'}));
-  for (const k of breaks) mask.append(sv('rect', {x:k.x, y:HH, width:k.w, height:H - HH, fill:'#000'}));
-  defs.append(mask); svg.append(defs);
+  svg.append(defs);
   // Ticks: choose a step that keeps labels apart.
   const span = tEnd - t0, step = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600].find(s => s * PX >= 60) || 3600;
+  let lastTick = -Infinity;
   for (let t = 0; t <= span + PAD; t += step) {
-    const x = X(t0 + t); svg.append(sv('line', {x1:x, x2:x, y1:0, y2:H, class:'grid'}), sv('text', {x:x + 3, y:15, class:'tick'}, '+' + (step < 1 ? t.toFixed(2).replace(/0$/, '') : Math.round(t)) + ' s'));
+    const x = X(t0 + t); if (x - lastTick < 45) continue; lastTick = x; svg.append(sv('line', {x1:x, x2:x, y1:0, y2:H, class:'grid'}), sv('text', {x:x + 3, y:15, class:'tick'}, '+' + (step < 1 ? t.toFixed(2).replace(/0$/, '') : Math.round(t)) + ' s'));
   }
   rows.forEach((r, i) => { r.y = HH + i * RH; svg.append(sv('line', {x1:0, x2:W, y1:r.y, y2:r.y, class:'row'})); });
-  const mid = r => r.y + RH / 2;
+  const mid = r => r.y + RH / 2, bandLabels = sv('g');
   // Approval bands sit behind arrows and bars and only cover this turn's rows.
   for (const k of breaks) {
     const x = k.x, y0 = HH, y1 = H, step = 8, amp = 4; let left = `M${x},${y0}`, right = '';
     for (let y = y0, j = 0; y < y1; y += step, j++) left += `L${x + (j % 2 ? amp : 0)},${Math.min(y1, y + step)}`;
     for (let y = y1, j = 0; y > y0; y -= step, j++) right += `L${x + k.w - (j % 2 ? amp : 0)},${Math.max(y0, y - step)}`;
     const g = sv('g', {class:'bar', tabindex:0, 'data-tip':tip({type:'approval', band:k, t0})});
-    g.append(sv('path', {d:`${left}L${x + k.w},${y1}${right}Z`, class:'brk'}), sv('text', {transform:`translate(${x + k.w / 2 + 4},${(y0 + y1) / 2}) rotate(-90)`, class:'brkt'}, 'approvals' + (k.wait == null ? '' : ' · ' + secs(k.wait))));
+    g.append(sv('path', {d:`${left}L${x + k.w},${y1}${right}Z`, class:'brk'})); bandLabels.append(sv('text', {transform:`translate(${x + k.w / 2 + 4},${(y0 + y1) / 2}) rotate(-90)`, class:'brkt'}, 'approvals' + (k.wait == null ? '' : ' · ' + secs(k.wait))));
     svg.append(g);
   }
-  const deps = sv('g'), bars = sv('g', {mask:`url(#${id}-cut)`});
+  const deps = sv('g'), bars = sv('g'), links = [];
   const callRow = n => rows.find(r => r.kind === 'call' && r.call.index === n);
-  const labelAt = (s, e) => { const k = breaks.filter(k => k.x < X(e) && k.x + k.w > X(s) - 0.5).at(-1); const x = k ? k.x + k.w : X(s); return {x:x + 4, room:X(e) - x}; };
-  const label = (s, e, value, y) => { const at = labelAt(s, e); return sv('text', {x:at.x, y, class:'in', 'data-room':at.room}, value); };
-  // Arrows always enter their target from the left. With room, a single elbow; otherwise leave
-  // to the right, run along the row boundary next to the target, back past its start, and turn in.
-  const STUB = 6;
-  const route = (x1, y1, x2, y2) => {
-    if (x2 - x1 >= 2 * STUB) return `M${x1},${y1}H${x1 + STUB}V${y2}H${x2 - 1}`;
-    const lane = y2 > y1 ? y2 - RH / 2 : y2 + RH / 2;
-    return `M${x1},${y1}H${x1 + STUB}V${lane}H${x2 - STUB}V${y2}H${x2 - 1}`;
+  // Use only painted intervals for labels and ports. A masked rectangle's bounding box would
+  // include invisible space. Split at band edges before drawing, not after attaching the arrows.
+  const paint = (g, r, x, right, cls, seg) => {
+    if (!(right > x)) return;
+    const draw = (l, h) => {
+      if (!(h > l)) return;
+      (r.parts ||= []).push([l,h]);
+      g.append(sv('rect', {x:l, y:r.y + 5, width:h-l, height:RH-10, rx:2, class:cls, 'data-seg':seg}));
+    };
+    for (const k of breaks) {
+      if (k.x >= right) break;
+      // An unrelated tool may run during a measured wait; retain it on the compressed scale.
+      if (k.wait > 0 && !r.tool?.approvals?.some(i => k.items.some(g => g.index === i))) continue;
+      if (x < k.x + k.w) { draw(x,k.x); x = Math.max(x,k.x + k.w); }
+    }
+    draw(x,right);
   };
-  const arrow = (x1, y1, x2, y2, detail) => { const d = route(x1, y1, x2, y2), g = sv('g', {class:'link', 'data-tip':tip({...detail, t0})}); g.append(sv('path', {d, class:'dephit'}), sv('path', {d, class:'dep', 'marker-end':`url(#${id})`})); deps.append(g); };
+  const label = (g,r,value) => {
+    if (!value || !r.parts?.length) return;
+    // Adjacent model phases form one readable interval; never span a gap.
+    const runs = [];
+    for (const [a,b] of r.parts) { const last = runs.at(-1); if (last && last[1] === a) last[1] = b; else runs.push([a,b]); }
+    const [a,b] = runs.reduce((best,p) => p[1]-p[0] > best[1]-best[0] ? p : best);
+    g.append(sv('text', {x:a+4, y:r.y+17, class:'in','data-room':b-a},value));
+  };
+  const arrow = (from,to,detail) => {
+    if (!from.parts?.length || !to.parts?.length) return;
+    const x1 = from.parts.at(-1)[1], x2 = to.parts[0][0], y1 = mid(from), y2 = mid(to), stub = 7;
+    // Cross intermediate rows in clear space. Share a trunk for coincident ports rather than
+    // drawing an apparent join in the middle of an unrelated bar.
+    const obstacles = rows.filter(r => mid(r)>y1 && mid(r)<y2).flatMap(r => r.parts || []);
+    const into = x2-stub-2; // Two extra pixels of straight approach; the tip stays at x2.
+    const candidates = [x1+stub,into,...obstacles.flatMap(([l,h]) => [l-stub,h+stub])];
+    const clear = candidates.filter(x => x>=1 && x<W && obstacles.every(([l,h]) => x<=l-3 || x>=h+3));
+    const trunk = clear.sort((a,b) => Math.abs(a-x1-stub)+Math.abs(a-into)-Math.abs(b-x1-stub)-Math.abs(b-into))[0] ?? x1+stub;
+    const out = x1+stub, lane1 = y1+RH/2-2, lane2 = y2-RH/2+2;
+    const d = `M${x1},${y1}H${out}V${lane1}H${trunk}V${lane2}H${into}V${y2}H${x2}`;
+    const g = sv('g',{class:'link','data-tip':tip(detail)});
+    g.append(sv('path',{d,class:'dephit'}),sv('path',{d,class:'dep','marker-end':`url(#${id})`})); deps.append(g);
+  };
   const labels = node('div', 'tt-labels'); labels.append(node('div', '', 'Elapsed from ' + clock(t0)));
   for (const r of rows) {
     const by = r.y + 5, bh = RH - 10, line = node('div', r.kind);
@@ -1726,37 +1750,38 @@ function drawTimingTurn(turn, collapsed) {
       line.append(node('span', 'name', 'Model call ' + c.index), node('span', 'sub', u.initiator === 'user' ? 'prompt' : u.initiator ? 'tool results' : ''), node('span', 'dur', q ? secs(q.end - q.start) : live && !Number.isFinite(c.end) ? 'running' : '—'));
       const g = sv('g', {class:'bar', tabindex:0, 'data-tip':tip({type:'call', call:c, turn, t0})}); line.dataset.tip = g.dataset.tip;
       if (q) {
-        const first = Number.isFinite(q.first_token) ? q.first_token : q.end;
-        g.append(sv('rect', {x:X(q.start), y:by, width:Math.max(2, X(first) - X(q.start)), height:bh, class:'wait', rx:2, 'data-seg':'wait'}));
-        if (q.end > first) g.append(sv('rect', {x:X(first), y:by, width:Math.max(2, X(q.end) - X(first)), height:bh, class:'stream', rx:2, 'data-seg':'stream'}));
-        if (u.model_name || u.model) g.append(label(q.start, q.end, u.model_name || u.model, by + 12));
+        const x = X(q.start), right = Math.max(x+2,X(q.end));
+        if (Number.isFinite(q.first_token) && q.first_token >= q.start && q.first_token <= q.end) {
+          const split = Math.min(right,X(q.first_token));
+          paint(g,r,x,split,'wait','wait'); paint(g,r,split,right,'stream','stream');
+        } else paint(g,r,x,right,'unknown');
+        label(g,r,u.model_name || u.model);
       } else if (Number.isFinite(c.start)) {
-        const e = end(c.end);
-        g.append(sv('rect', {x:X(c.start), y:by, width:Math.max(2, X(e) - X(c.start)), height:bh, class:'unknown' + (Number.isFinite(c.end) ? '' : ' live'), rx:2}));
+        const x = X(c.start); paint(g,r,x,Math.max(x+2,X(end(c.end,c.start))),'unknown' + (Number.isFinite(c.end) ? '' : ' live'));
       }
       bars.append(g);
     } else if (r.kind === 'tool') {
-      // Gated tools are drawn from the end of their approval band: until then they were waiting
-      // for permission, not running. The tooltip keeps the SDK's reported start.
-      const t = r.tool, e = end(t.end), failed = t.success === false, s0 = Math.min(Math.max(t.start, shown.get(t) ?? t.start), e);
+      // Keep reported timestamps for tooltips; attach connectors to the visible pieces.
+      const t = r.tool, e = end(t.end,t.start), failed = t.success === false, s0 = Math.min(Math.max(t.start, shown.get(t) ?? t.start), e);
       line.append(node('span', 'name', t.name), node('span', 'dur', Number.isFinite(t.end) ? secs(t.end - t.start) : live ? 'running' : '—'));
       if (Number.isFinite(t.start)) {
         const g = sv('g', {class:'bar', tabindex:0, 'data-tip':tip({type:'tool', tool:t, t0, calls})}); line.dataset.tip = g.dataset.tip;
-        g.append(sv('rect', {x:X(s0), y:by, width:Math.max(3, X(e) - X(s0)), height:bh, class:'tool' + (failed ? ' fail' : '') + (Number.isFinite(t.end) ? '' : ' live'), rx:2}), label(s0, e, t.name, by + 12));
-        bars.append(g);
-        const from = callRow(t.call);
-        if (from && Number.isFinite(t.requested)) arrow(Math.max(X(t.requested), from.call.request ? X(from.call.request.end) : -Infinity), mid(from), X(s0), mid(r), {type:'request', tool:t, call:from.call});
-        const back = callRow(t.returns_to);
-        if (back && Number.isFinite(t.end) && Number.isFinite(back.call.start)) arrow(X(s0) + Math.max(3, X(t.end) - X(s0)), mid(r), X(back.call.start), mid(back), {type:'return', tool:t, call:back.call, siblings:tools.filter(x => x.returns_to === back.call.index)});
+        const x = X(s0);
+        if (!(shown.has(t) && e < shown.get(t))) paint(g,r,x,Math.max(x+3,X(e)),'tool' + (failed ? ' fail' : '') + (Number.isFinite(t.end) ? '' : ' live'));
+        label(g,r,t.name); bars.append(g);
+        const from = callRow(t.call), back = callRow(t.returns_to);
+        if (from && Number.isFinite(t.requested)) links.push([from,r,{type:'request',tool:t,call:from.call,t0}]);
+        if (back && Number.isFinite(t.end)) links.push([r,back,{type:'return',tool:t,call:back.call,siblings:tools.filter(x => x.returns_to === back.call.index),t0}]);
       }
     } else {
-      const c = r.compact, e = end(c.end);
+      const c = r.compact, e = end(c.end,c.start);
       line.append(node('span', 'name', 'Compaction'), node('span', 'dur', Number.isFinite(c.end) ? secs(c.end - c.start) : 'running'));
-      if (Number.isFinite(c.start)) { const g = sv('g', {class:'bar', tabindex:0, 'data-tip':tip({type:'compact', compact:c, t0})}); line.dataset.tip = g.dataset.tip; g.append(sv('rect', {x:X(c.start), y:by, width:Math.max(3, X(e) - X(c.start)), height:bh, class:'compact', rx:2})); bars.append(g); }
+      if (Number.isFinite(c.start)) { const g = sv('g', {class:'bar', tabindex:0, 'data-tip':tip({type:'compact', compact:c, t0})}); line.dataset.tip = g.dataset.tip; const x = X(c.start); paint(g,r,x,Math.max(x+3,X(e)),'compact'); bars.append(g); }
     }
     labels.append(line);
   }
-  svg.append(deps, bars);
+  for (const link of links) arrow(...link);
+  svg.append(deps, bars, bandLabels);
   const chart = node('div', 'tt-chart'); chart.append(svg);
   const body = node('div', 'tt-body'); body.append(labels, chart);
   for (const note of turn.notes || []) body.append(node('p', 'tt-note', note));
@@ -1814,7 +1839,7 @@ function tipContent(d, seg) {
   } else if (d.type === 'return') {
     const t = d.tool;
     box.append(node('h3', '', t.name + ' → Model call ' + d.call.index));
-    box.append(tipRows([['Tool finished', at(t.end)], ['Next model call', at(d.call.start)], ['Delay', secs(Math.max(0, d.call.start - t.end))], ['Results in that call', d.siblings.map(x => x.name).join(', ')]]));
+    box.append(tipRows([['Tool finished', at(t.end)], ['Next model call', at(d.call.start)], ['Request sent', d.call.request ? at(d.call.request.start) : null], ['Delay', secs(Math.max(0, d.call.start - t.end))], ['Results in that call', d.siblings.map(x => x.name).join(', ')]]));
     if (d.siblings.length > 1) box.append(node('p', 'tip-note', 'The SDK waits for every tool in the batch before calling the model again.'));
   } else if (d.type === 'call') {
     const c = d.call, u = c.usage || {}, q = c.request, tok = u.tokens || {};
