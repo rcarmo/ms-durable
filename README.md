@@ -32,7 +32,7 @@ The Linux amd64 image includes the pinned Copilot runtime and runs as UID/GID `1
 docker run --init --rm -p 127.0.0.1:8015:8015 \
   --env-file ./ms-durable.env \
   -v ms-durable-state:/state -v ms-durable-work:/work \
-  ghcr.io/rcarmo/ms-durable:v0.2.0
+  ghcr.io/rcarmo/ms-durable:v0.2.1
 ```
 
 Set `COPILOT_GITHUB_TOKEN` and `MS_DURABLE_TOKEN` in the protected environment file. For your own provider, mount the configuration read-only, set `MS_DURABLE_PROVIDERS_FILE` and supply the required credential variables. If `MS_DURABLE_TOKEN` is unset, the app generates `/state/web-token`. Keep credentials out of the image.
