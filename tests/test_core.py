@@ -78,6 +78,27 @@ async def test_snapshot_keeps_turn_rows_consistent_with_event_cursor(store, monk
     assert [e["turn_id"] for e in await store.events(sid)] == [turn["id"]]
 
 
+async def test_session_fs_reports_only_successful_context_reads(store, tmp_path):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    observed = []
+
+    async def on_read(*metadata):
+        observed.append(metadata)
+
+    for name in ("AGENTS.md", "skill.md", "other.md"):
+        (root / name).write_text("private contents")
+    fs = SQLiteSessionFS(store, "test", local_roots=[root], on_read=on_read)
+    for name in ("AGENTS.md", "skill.md", "other.md"):
+        assert await fs.read_file(str(root / name)) == "private contents"
+    with pytest.raises(FileNotFoundError):
+        await fs.read_file(str(root / "missing" / "SKILL.md"))
+    assert [name for name, _, _ in observed] == ["AGENTS.md", "SKILL.md"]
+    assert all(duration >= 0 and finished > 0 for _, duration, finished in observed)
+    plain = SQLiteSessionFS(store, "test", local_roots=[root])
+    assert await plain.read_file(str(root / "AGENTS.md")) == "private contents"
+
+
 async def test_session_fs_atomic_append_rename_namespace_and_reopen(store):
     a, b = SQLiteSessionFS(store, "a"), SQLiteSessionFS(store, "b")
     await a.write_file("/state/events.jsonl", "one\n")

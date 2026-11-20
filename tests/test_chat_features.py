@@ -764,6 +764,32 @@ def test_external_preview_rejects_nonpublic_and_unlisted_hosts(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_timing_core_activity_preserves_sources_and_omits_payloads(store):
+    sid = (await store.create_session("timing", "mock"))["id"]
+    tid = (await store.submit(sid, "prompt", "activity"))["id"]
+    secret = "private-file-contents-and-path"
+    await store.execute("UPDATE turns SET error=? WHERE id=?", (secret, tid))
+    await store.event(sid, tid, "app.context_read", {"name": "SKILL.md", "duration_ms": 125, "path": secret}, ts=100)
+    await store.event(sid, tid, "app.instructions_loaded", {"content": secret}, "instructions", 101)
+    await store.event(sid, tid, "app.instructions_loaded", {}, "instructions", 101)
+    await store.event(sid, tid, "session.skills_loaded", {"skills": [{"path": secret}]}, ts=102)
+    await store.event(sid, tid, "skill.invoked_ref", {"name": "offline", "contentId": secret}, "skill", 103)
+    await store.event(sid, tid, "app.instruction_discovered", {"path": secret}, "discovered")
+    await store.execute("UPDATE events SET ts=NULL WHERE sdk_id='discovered'")
+    (turn,) = (await store.timing(sid))["turns"]
+    assert turn["start"] == 99.875 and turn["end"] == 103
+    assert turn["tools"] == []
+    assert turn["activity"] == [
+        {"kind": "app.context_read", "name": "SKILL.md", "duration_ms": 125, "at": 100},
+        {"kind": "app.instructions_loaded", "at": 101},
+        {"kind": "session.skills_loaded", "count": 1, "at": 102},
+        {"kind": "skill.invoked", "name": "offline", "at": 103},
+        {"kind": "app.instruction_discovered", "at": None},
+    ]
+    assert secret not in json.dumps(turn)
+
+
+@pytest.mark.asyncio
 async def test_timing_pages_turns_without_tool_payloads(store):
     sid = (await store.create_session("timing", "mock"))["id"]
     tids = [(await store.submit(sid, f"prompt {n}", f"r{n}"))["id"] for n in range(3)]

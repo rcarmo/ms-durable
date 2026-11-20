@@ -18,10 +18,11 @@ from .store import Store
 
 
 class SQLiteSessionFS(SessionFsProvider):
-    def __init__(self, store: Store, namespace: str, local_roots=(), protected=()):
+    def __init__(self, store: Store, namespace: str, local_roots=(), protected=(), on_read=None):
         self.store, self.namespace = store, namespace
         self.local_roots = tuple(Path(p).resolve() for p in local_roots)
         self.protected = tuple(Path(p).resolve() for p in protected)
+        self.on_read = on_read
 
     def local(self, path):
         # sessionFs is also used by native coding tools, not just transcripts.
@@ -57,7 +58,14 @@ class SQLiteSessionFS(SessionFsProvider):
 
     async def read_file(self, path):
         if local := self.local(path):
-            return await asyncio.to_thread(local.read_text, encoding="utf-8")
+            name = local.name.upper()
+            if not self.on_read or name not in {"AGENTS.MD", "SKILL.MD"}:
+                return await asyncio.to_thread(local.read_text, encoding="utf-8")
+            started = time.monotonic()
+            content = await asyncio.to_thread(local.read_text, encoding="utf-8")
+            elapsed = (time.monotonic() - started) * 1000
+            await self.on_read(name.removesuffix(".MD") + ".md", elapsed, time.time())
+            return content
         row = await self.entry(path)
         if row["is_directory"]:
             raise IsADirectoryError(path)

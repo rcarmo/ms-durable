@@ -8,6 +8,8 @@ import asyncio
 import json
 import os
 import socket
+from pathlib import Path
+from shutil import copytree
 
 import pytest
 import uvicorn
@@ -73,7 +75,15 @@ async def test_native_azure_routing_resume_and_prefix(
         async def chunks():
             latest = body["messages"][-1]
             last = json.dumps(latest)
-            if latest["role"] == "user" and "DELEGATION_PARENT_CALL" in last:
+            tool = arguments = call_id = None
+            if (
+                latest["role"] == "user"
+                and "TRACE_WEB_SEARCH" in last
+                and "NATIVE_TRACE_WEB_SEARCH" not in json.dumps(body["messages"])
+            ):
+                tool, arguments, call_id = "skill", {"skill": "test-web-search"}, "call_search_skill"
+            elif latest["role"] == "user" and "DELEGATION_PARENT_CALL" in last:
+                tool, call_id = "delegate_to_sessions", "call_delegate_batch"
                 arguments = {
                     "tasks": [
                         {"session_id": "@" + name, "prompt": "Inspect " + name}
@@ -82,14 +92,12 @@ async def test_native_azure_routing_resume_and_prefix(
                     "request_id": "native-batch",
                     "timeout_seconds": 10,
                 }
+            if tool:
                 call = {
                     "index": 0,
-                    "id": "call_delegate_batch",
+                    "id": call_id,
                     "type": "function",
-                    "function": {
-                        "name": "delegate_to_sessions",
-                        "arguments": json.dumps(arguments),
-                    },
+                    "function": {"name": tool, "arguments": json.dumps(arguments)},
                 }
                 yield (
                     "data: "
@@ -178,8 +186,11 @@ async def test_native_azure_routing_resume_and_prefix(
     )
     path.write_text(json.dumps(profiles))
     workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    settings = Settings(data=tmp_path / "data", working_directory=workspace, providers_file=path)
+    copytree(Path(__file__).parent / "fixtures/native-workspace", workspace)
+    settings = Settings(
+        data=tmp_path / "data", working_directory=workspace, providers_file=path,
+        skill_directories=[str(workspace / ".github/skills")],
+    )
     settings.data.mkdir()
     callbacks = []
 
@@ -244,6 +255,8 @@ async def test_native_azure_routing_resume_and_prefix(
             assert result["status"] == "done", result["error"]
             assert result["answer"] == "FOUNDRY_ADAPTER_OK"
         assert len(requests) == 2
+        assert "NATIVE_TRACE_AGENTS" in json.dumps(requests[0]["body"]["messages"])
+        assert "test-web-search" in json.dumps(requests[0]["body"])
         if api_version:
             assert requests[0]["path"] == "/openai/deployments/deployment-test/chat/completions"
             assert requests[0]["query"]["api-version"] == api_version
@@ -353,6 +366,25 @@ async def test_native_azure_routing_resume_and_prefix(
         assert all(b"synthetic-not-a-real-key" not in row["content"] for row in files)
         if auth == "api_key" and api_version is None:
             delegate = (await store.create_session("Worker", "foundry/test"))["id"]
+            search = await runtime.enqueue(sid, "TRACE_WEB_SEARCH: search for durable session", "trace-search")
+            await asyncio.wait_for(runtime.workers[sid], 15)
+            assert "NATIVE_TRACE_WEB_SEARCH" in json.dumps(requests[-1]["body"]["messages"])
+            trace = (await store.timing(sid, limit=1))["turns"][0]
+            assert trace["id"] == search["id"]
+            [invocation] = [a for a in trace["activity"] if a["kind"] == "skill.invoked"]
+            assert invocation["name"] == "test-web-search"
+            assert invocation["at"] is not None and "duration_ms" not in invocation
+            assert any(t["name"] == "skill" and t["success"] for t in trace["tools"])
+            (projected,) = await store.rows(
+                "SELECT data FROM events WHERE turn_id=? AND type='skill.invoked'", (search["id"],)
+            )
+            assert json.loads(projected["data"]) == {"name": "test-web-search", "trigger": "agent-invoked"}
+            assert "NATIVE_TRACE_WEB_SEARCH" not in json.dumps(trace)
+            turns = (await store.timing(sid))["turns"]
+            markers = [a for turn in turns for a in turn["activity"]]
+            assert any(a["kind"] == "session.skills_loaded" and a["count"] >= 1 for a in markers)
+            assert any(a["kind"] == "app.instructions_loaded" and a["at"] is not None for a in markers)
+            assert "NATIVE_TRACE_AGENTS" not in json.dumps(turns)
             reply = await runtime.enqueue(
                 sid,
                 "The delegated build passed.",

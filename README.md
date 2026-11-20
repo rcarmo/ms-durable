@@ -32,7 +32,7 @@ The Linux amd64 image includes the pinned Copilot runtime and runs as UID/GID `1
 docker run --init --rm -p 127.0.0.1:8015:8015 \
   --env-file ./ms-durable.env \
   -v ms-durable-state:/state -v ms-durable-work:/work \
-  ghcr.io/rcarmo/ms-durable:v0.2.3
+  ghcr.io/rcarmo/ms-durable:v0.2.4
 ```
 
 Set `COPILOT_GITHUB_TOKEN` and `MS_DURABLE_TOKEN` in the protected environment file. For your own provider, mount the configuration read-only, set `MS_DURABLE_PROVIDERS_FILE` and supply the required credential variables. If `MS_DURABLE_TOKEN` is unset, the app generates `/state/web-token`. Keep credentials out of the image.
@@ -49,7 +49,9 @@ See the [browser and tool reference](docs/reference.md#browser-and-application-t
 
 ## Observability
 
-Open `/timing` in a conversation to see where a turn spent its time. The chart uses SDK events and approval timestamps stored in SQLite, so you can watch a running turn or scroll back to an earlier one. Hover over a model call for time to first token, streaming time and token counts when the SDK reports them. Tool rows show duration and outcome; the timing response omits tool arguments and result text.
+Open `/timing` in a conversation to see where a turn spent its time. The chart uses SDK events and approval timestamps stored in SQLite, so you can watch a running turn or scroll back to an earlier one. Hover over a model call for time to first token, streaming time and token counts when the SDK reports them. Tool rows show duration and outcome; the timing response omits tool arguments, result text and raw errors.
+
+Diamonds mark Copilot reports observed during a turn: custom instructions in a system message, on-demand instruction discovery, skill catalog reports and skill invocations. These are timestamps, not file-read durations. Only successful `AGENTS.md` and `SKILL.md` reads through the session filesystem adapter have measured read intervals. Copilot also opens files directly, and events emitted before the turn subscribes may be missed. The chart omits instruction and skill contents and file paths from these records.
 
 ![Sample timing trace: inspect runs through a seven-second approval wait for write, between two model calls](docs/sample-trace.png)
 

@@ -1029,6 +1029,15 @@ class Runtime:
                 self.session_approvals.add(self.approval_keys[aid])
             future.set_result(allow)
 
+    async def trace_context_read(self, sid, name, elapsed, finished):
+        if tid := self.active.get(sid):
+            try:
+                await self.store.event(
+                    sid, tid, "app.context_read", {"name": name, "duration_ms": elapsed}, ts=finished
+                )
+            except Exception:
+                log.exception("Could not record session filesystem read timing")
+
     async def session(self, sid):
         async with self.guard:
             if sid in self.sessions:
@@ -1082,6 +1091,7 @@ class Runtime:
                             "/workspace/.piclaw",
                             *([self.settings.mcp_file] if self.settings.mcp_file else []),
                         ],
+                        on_read=lambda name, elapsed, finished: self.trace_context_read(sid, name, elapsed, finished),
                     ),
                 },
                 system_message={
@@ -1180,6 +1190,19 @@ class Runtime:
                                 return
                             raw = self.redact(wire(value))
                             kind = raw.get("type", "")
+                            payload = raw.get("data") or {}
+                            if kind == "system.message":
+                                content = payload.get("content")
+                                if isinstance(content, str) and "<custom_instruction>" in content:
+                                    kind, payload = "app.instructions_loaded", {}
+                            elif kind == "system.notification":
+                                detail = payload.get("kind", {})
+                                if isinstance(detail, dict) and detail.get("type") == "instruction_discovered":
+                                    kind, payload = "app.instruction_discovered", {}
+                            elif kind in {"skill.invoked", "skill.invoked_ref"}:
+                                payload = {key: payload[key] for key in ("name", "trigger") if key in payload}
+                            elif kind == "session.skills_loaded":
+                                payload = {"count": len(payload.get("skills") or [])}
                             if kind.startswith(
                                 (
                                     "assistant.",
@@ -1190,12 +1213,14 @@ class Runtime:
                                     "skill.",
                                     "session.compaction_",
                                 )
-                            ) or kind in {"session.idle", "session.error"}:
+                            ) or kind in {
+                                "session.idle", "session.error", "app.instructions_loaded", "app.instruction_discovered",
+                            }:
                                 await self.store.event(
                                     sid,
                                     turn_id,
                                     kind,
-                                    raw.get("data", {}),
+                                    payload,
                                     raw.get("id"),
                                     parse_time(raw.get("timestamp")),
                                 )

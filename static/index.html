@@ -1525,7 +1525,8 @@ $('stop').onclick = async () => {
 };
 // ---- Timing pane: per-turn Gantt of model calls, tools and approvals ----
 const timing = {open:false, ctx:null, turns:new Map(), order:[], more:false, loading:false, refresh:null, live:null, details:new Map(), seq:0};
-const TIMING_TYPES = new Set(['assistant.turn_start','assistant.turn_end','assistant.usage','assistant.message','tool.execution_start','tool.execution_complete','app.approval','app.turn_started','app.turn_settled','app.turn_queued','session.compaction_start','session.compaction_complete','turn.updated']);
+const TIMING_TYPES = new Set(['assistant.turn_start','assistant.turn_end','assistant.usage','assistant.message','tool.execution_start','tool.execution_complete','app.approval','app.turn_started','app.turn_settled','app.turn_queued','session.compaction_start','session.compaction_complete','turn.updated',
+  'app.instructions_loaded','app.instruction_discovered','app.context_read','session.skills_loaded','skill.invoked','skill.invoked_ref']);
 const ZOOMS = [6.25, 12.5, 25, 50, 100, 200];
 let timingZoom = 50;
 try { const z = Number(localStorage.getItem('ms-durable.timing-zoom')); if (ZOOMS.includes(z)) timingZoom = z; } catch {}
@@ -1632,6 +1633,16 @@ function approvalBands(gates, now) {
   }
   return bands;
 }
+function activityLabel(a) {
+  switch (a.kind) {
+    case 'app.instructions_loaded': return 'Custom instructions in prompt';
+    case 'app.instruction_discovered': return 'Instruction discovered';
+    case 'session.skills_loaded': return 'Skill catalog reported';
+    case 'skill.invoked': return a.name ? 'Skill invoked · ' + a.name : 'Skill invoked';
+    case 'app.context_read': return a.name + ' read via adapter';
+    default: return 'Activity';
+  }
+}
 function drawTimingTurn(turn, collapsed) {
   const PX = timingZoom, RH = 26, HH = 24, PAD = 0.25;
   const now = Date.now() / 1000, live = !DONE.has(turn.status);
@@ -1664,6 +1675,7 @@ function drawTimingTurn(turn, collapsed) {
   }
   for (const tool of tools.filter(x => !calls.some(c => c.index === x.call))) rows.push({kind:'tool', tool});
   for (const c of turn.compactions || []) rows.push({kind:'compact', compact:c});
+  for (const activity of turn.activity || []) rows.push({kind:'activity', activity});
   const end = (x,start) => Number.isFinite(x) ? x : (live ? now : start);
 
   // Keep the band at the recorded request. A tiny pre-permission tool start is not a
@@ -1802,6 +1814,20 @@ function drawTimingTurn(turn, collapsed) {
         if (from && Number.isFinite(t.requested)) links.push([from,r,{type:'request',tool:t,call:from.call,t0}]);
         if (back && Number.isFinite(t.end)) links.push([r,back,{type:'return',tool:t,call:back.call,t0}]);
       }
+    } else if (r.kind === 'activity') {
+      const a = r.activity, measured = Number.isFinite(a.duration_ms);
+      line.append(node('span', 'name', activityLabel(a)), node('span', 'dur', measured ? secs(a.duration_ms / 1000) : '—'));
+      const detail = tip({type:'activity', activity:a, t0});
+      line.dataset.tip = detail;
+      if (Number.isFinite(a.at)) {
+        const x = X(a.at), y = mid(r);
+        const g = sv('g', {class:'bar', tabindex:0, 'aria-label':activityLabel(a), 'data-tip':detail});
+        if (measured) paint(g,r,X(a.at - a.duration_ms / 1000),x,'compact');
+        g.append(sv('path', {d:`M${x},${y-4}l4,4l-4,4l-4,-4z`, class:'compact'}));
+        bars.append(g);
+      } else {
+        line.tabIndex = 0;
+      }
     } else {
       const c = r.compact, e = end(c.end,c.start);
       line.append(node('span', 'name', 'Compaction'), node('span', 'dur', Number.isFinite(c.end) ? secs(c.end - c.start) : 'running'));
@@ -1814,7 +1840,6 @@ function drawTimingTurn(turn, collapsed) {
   const chart = node('div', 'tt-chart'); chart.append(svg);
   const body = node('div', 'tt-body'); body.append(labels, chart);
   for (const note of turn.notes || []) body.append(node('p', 'tt-note', note));
-  if (turn.error) body.append(node('p', 'tt-note', turn.error));
   article.append(body);
   return article;
 }
@@ -1853,9 +1878,16 @@ function tipContent(d, seg) {
       ['Output tokens', tok('output') != null ? count(tok('output')) + (tok('reasoning') ? ' (' + count(tok('reasoning')) + ' reasoning)' : '') : null],
       ['Premium requests', sum(use.map(u => u.premium_requests))],
       ['Status', STATES[t.status] || t.status],
-      ['Error', t.error],
     ]));
     if (t.prompt) box.append(node('p', 'tip-note', t.prompt));
+  } else if (d.type === 'activity') {
+    const a = d.activity, measured = Number.isFinite(a.duration_ms);
+    box.append(node('h3', '', activityLabel(a)), tipRows([
+      ['Source', measured ? 'Session filesystem adapter' : 'Copilot SDK event'],
+      [measured ? 'Read finished' : 'Reported', at(a.at)],
+      ['Read duration', measured ? secs(a.duration_ms / 1000) : 'Not measured'],
+      ['Catalog entries', a.count],
+    ]));
   } else if (d.type === 'idle') {
     box.append(node('h3', '', 'Gap between turns'));
     box.append(tipRows([['Previous turn ended', clock(d.from.end)], ['Next turn started', clock(d.to.start)], ['Gap', secs(d.to.start - d.from.end)], ['Next prompt received', Number.isFinite(d.to.received) ? clock(d.to.received) : null]]));
@@ -1896,7 +1928,7 @@ function tipContent(d, seg) {
     if (!q) box.append(node('p', 'tip-note', 'Request timing unavailable.'));
   } else if (d.type === 'tool') {
     const t = d.tool, g = t.approval;
-    box.append(node('h3', '', t.name + (t.skill ? ' · ' + t.skill : '')));
+    box.append(node('h3', '', t.name));
     box.append(tipRows([
       ['MCP server', t.server],
       ['Requested by', Number.isFinite(t.call) ? 'Model call ' + t.call : null],

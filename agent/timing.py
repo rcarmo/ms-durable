@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from math import isfinite
 
 # Event types the timing view reads. Streaming deltas are excluded: they are numerous
 # and add nothing the usage report does not already summarise.
@@ -22,6 +23,11 @@ TYPES = (
     "tool.execution_start",
     "tool.execution_complete",
     "skill.invoked",
+    "skill.invoked_ref",
+    "session.skills_loaded",
+    "app.instructions_loaded",
+    "app.instruction_discovered",
+    "app.context_read",
     "session.compaction_start",
     "session.compaction_complete",
     "app.turn_queued",
@@ -119,13 +125,29 @@ def build_turn(turn, events, approvals, times):
     def when(row):
         return row.get("ts") if row.get("ts") is not None else times.get(row.get("sdk_id") or "")
 
-    calls, tools, compactions, notes = [], [], [], []
+    calls, tools, compactions, notes, activity = [], [], [], [], []
     by_tool, by_api = {}, {}
     call = None
     user = started = None
     host = {}
     for row in events:
         kind, data, t = row["type"], row["data"] or {}, when(row)
+        if kind in {"app.instructions_loaded", "app.instruction_discovered", "session.skills_loaded", "app.context_read"}:
+            item = {"kind": kind, "at": t}
+            if kind == "session.skills_loaded":
+                # Older rows stored the full catalog. Expose only its size.
+                count, skills = data.get("count"), data.get("skills")
+                if type(count) is int and count >= 0:
+                    item["count"] = count
+                elif isinstance(skills, list):
+                    item["count"] = len(skills)
+            elif kind == "app.context_read":
+                name, elapsed = data.get("name"), number(data.get("duration_ms"))
+                if name not in ("AGENTS.md", "SKILL.md") or elapsed is None or not isfinite(elapsed) or elapsed < 0:
+                    continue
+                item.update(name=name, duration_ms=elapsed)
+            activity.append(item)
+            continue
         if kind.startswith("app."):
             host[kind] = t
             continue
@@ -184,10 +206,14 @@ def build_turn(turn, events, approvals, times):
             metrics = (data.get("toolTelemetry") or {}).get("metrics") or {}
             if number(metrics.get("result_token_count")) is not None:
                 item["result_tokens"] = metrics["result_token_count"]
-        elif kind == "skill.invoked":
-            item = next((x for x in reversed(tools) if x["name"] == "skill"), None)
-            if item is not None and data.get("name"):
-                item["skill"] = data.get("name")
+        elif kind in {"skill.invoked", "skill.invoked_ref"}:
+            name = data.get("name")
+            item = {"kind": "skill.invoked", "at": t}
+            if isinstance(name, str) and name:
+                item["name"] = clip(name, 100)
+            # The SDK supplies no tool call ID on this receipt. Keep its timestamp
+            # separate: a user-initiated invocation may have no tool call at all.
+            activity.append(item)
         elif kind == "session.compaction_start":
             compactions.append({"start": t, "end": None})
         elif kind == "session.compaction_complete" and compactions:
@@ -261,6 +287,7 @@ def build_turn(turn, events, approvals, times):
         item.pop("key", None)
 
     marks = [t for t in [user, *[c["start"] for c in calls], *[x["start"] for x in tools]] if t]
+    marks += [a["at"] - a.get("duration_ms", 0) / 1000 for a in activity if a["at"] is not None]
     ends = [
         t
         for t in [
@@ -270,6 +297,7 @@ def build_turn(turn, events, approvals, times):
         ]
         if t
     ]
+    ends += [a["at"] for a in activity if a["at"] is not None]
     started = host.get("app.turn_started")
     return {
         "id": turn["id"],
@@ -278,7 +306,6 @@ def build_turn(turn, events, approvals, times):
         "number": turn.get("number"),
         # A short first-line excerpt identifies the turn; the full prompt is in the chat.
         "prompt": clip(" ".join((turn.get("prompt") or "").split()), 80),
-        "error": clip(turn.get("error"), 300),
         "received": turn.get("created_at"),
         "started": started,
         "sdk_received": user,
@@ -289,5 +316,6 @@ def build_turn(turn, events, approvals, times):
         "tools": tools,
         "approvals": gates,
         "compactions": compactions,
+        "activity": activity,
         "notes": notes,
     }

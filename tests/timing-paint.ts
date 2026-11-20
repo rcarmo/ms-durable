@@ -6,11 +6,26 @@ export async function timingPaint(page: Page, url: string, root: string, theme: 
   const call = (index:number,start:number,first:number|null,end:number) => ({index,start:start-.2,end,response:end,request:{start,first_token:first,end},usage:{model_name:'Example model'}});
   const tool = (name:string,start:number,end:number,extra={}) => ({name,start,end,requested:102,call:1,returns_to:2,success:true,...extra});
   const turn = {id:'paint',number:1,received:97,sdk_received:100,kind:'prompt',prompt:'Parallel tools and a measured approval',status:'done',start:100,end:118,calls:[call(1,100,101,102),call(2,114.02,null,118)],tools:[tool('read',102.01,104),tool('inspect',102.02,114),tool('write',105,114.01,{approvals:[0],approval:gate}),tool('fast failure',102.03,102.031,{success:false})],approvals:[gate]};
-  await page.route('**/api/sessions/*/timing*',r=>r.fulfill({json:{turns:[turn],more:false}}));
+  const activity = [
+    {kind:'app.instructions_loaded',at:100.25},
+    {kind:'session.skills_loaded',at:100.26,count:1},
+    {kind:'skill.invoked',at:104,name:'test-web-search'},
+    {kind:'app.context_read',at:104,name:'SKILL.md',duration_ms:250},
+    {kind:'app.instruction_discovered',at:null},
+  ];
+  await page.route('**/api/sessions/*/timing*',r=>r.fulfill({json:{turns:[{...turn,activity}],more:false}}));
   await page.goto(url+'#token=synthetic-ui-token'); await page.locator('#timing-toggle').click();
   const chart = page.locator('.tt-chart svg.timing'); await chart.waitFor();
   const heading=page.locator('.tt-head'); await heading.hover();
   if(/SDK|before the .*prompt/i.test(await heading.innerText()+' '+await page.locator('#timing-tip').innerText()))throw Error('Turn timing implies an unmeasured prompt handoff');
+  const labels = page.locator('.tt-labels .activity');
+  if(await labels.count()!==5 || !(await labels.allTextContents()).some(t=>t.includes('test-web-search')))throw Error('Missing core activity labels');
+  const marker = chart.getByLabel('Custom instructions in prompt',{exact:true});
+  if(await marker.locator('path').count()!==1 || await marker.locator('rect').count()!==0)throw Error('An SDK receipt should have a marker, not a duration bar');
+  await marker.focus();
+  if(!(await page.locator('#timing-tip').innerText()).includes('Not measured'))throw Error('Missing SDK timing caveat');
+  if(await chart.getByLabel('SKILL.md read via adapter',{exact:true}).locator('rect').count()!==1)throw Error('Missing measured adapter interval');
+  if(await chart.getByLabel('Instruction discovered',{exact:true}).count()!==0)throw Error('Missing timestamp invented a chart mark');
   const scales=[6.25,12.5,25,50,100,200];
   for(const z of scales){
     while(parseFloat(await page.locator('#timing-scale').innerText())!==z){const current=parseFloat(await page.locator('#timing-scale').innerText());await page.locator(current>z?'#timing-zoom-out':'#timing-zoom-in').click();}
