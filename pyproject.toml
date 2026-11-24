@@ -1,10 +1,10 @@
 [project]
 name = "ms-durable"
-version = "0.2.4"
+version = "0.2.5"
 license = {file = "LICENSE"}
 description = "A small asyncio/FastAPI UI for the Microsoft Copilot harness"
 requires-python = ">=3.11"
-dependencies = ["microsoft-copilot-sdk==2.0.1", "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "aiosqlite>=0.20,<1", "pillow==13.0.0"]
+dependencies = ["microsoft-copilot-sdk==2.0.2", "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "aiosqlite>=0.20,<1", "pillow==13.0.0"]
 
 [project.optional-dependencies]
 azure = ["azure-identity>=1.19,<2"]

@@ -1,6 +1,6 @@
 # ms-durable
 
-Python 3.11+, asyncio, FastAPI, aiosqlite; Microsoft Copilot SDK 2.0.1.
+Python 3.11+, asyncio, FastAPI, aiosqlite; Microsoft Copilot SDK 2.0.2.
 
 Copilot owns inference, agent execution, model switching, transcript recovery, coding tools, AGENTS.md discovery, skills and MCP. Do not reimplement these. Host code owns HTTP authentication, a durable input queue, session catalogue, permission UI, event projection and the SQLite sessionFs adapter. All SDK operations use the public Python APIs.
 

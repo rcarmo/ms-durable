@@ -1392,7 +1392,14 @@ $('rename-form').onsubmit = async event => {
   } catch (e) { text($('rename-error'), e.message); }
   finally { save.disabled = false; input.readOnly = false; }
 };
-$('open-settings').onclick = () => $('settings-dialog').showModal();
+const settingsDialog = $('settings-dialog');
+$('open-settings').onclick = () => settingsDialog.showModal();
+settingsDialog.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing && settingsDialog.open) {
+    event.preventDefault();
+    settingsDialog.close();
+  }
+});
 function setPreviewFields() {
   const prefs = config?.link_previews || {};
   $('preview-enabled').checked = Boolean(prefs.enabled); $('preview-any').checked = Boolean(prefs.any_domain);
