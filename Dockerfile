@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.13-slim AS build
+FROM python:3.14-slim@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d83729c138b28b AS build
 ENV COPILOT_CLI_EXTRACT_DIR=/opt/copilot
 COPY requirements.lock /tmp/requirements.lock
 RUN python -m venv --without-pip /opt/venv \
@@ -9,7 +9,7 @@ RUN python -m venv --without-pip /opt/venv \
  && chmod -R a+rX /opt/copilot \
  && find /opt/venv /opt/copilot -type d -name __pycache__ -prune -exec rm -rf {} +
 
-FROM python:3.13-slim
+FROM python:3.14-slim@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d83729c138b28b
 LABEL org.opencontainers.image.source="https://github.com/rcarmo/ms-durable"
 ENV PATH=/opt/venv/bin:$PATH \
     COPILOT_CLI_EXTRACT_DIR=/opt/copilot \
