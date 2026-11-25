@@ -8,12 +8,13 @@ dependencies = ["microsoft-copilot-sdk==2.0.2", "fastapi>=0.115,<1", "uvicorn>=0
 
 [project.optional-dependencies]
 azure = ["azure-identity>=1.19,<2"]
-dev = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2", "httpx>=0.28,<1", "ruff>=0.9,<1"]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2", "pytest-bdd==9.0.1", "httpx>=0.28,<1", "ruff>=0.9,<1"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = ["implemented: executable current behaviour", "python: Python acceptance scenarios"]
 
 [tool.ruff]
 line-length = 100

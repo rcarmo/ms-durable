@@ -40,6 +40,7 @@ const events = [
 ];
 const pendingApproval = {id: 'p1', status: 'pending', request: JSON.stringify({kind: 'write', fileName: 'summary.md', intention: 'Create the summary file'})};
 let approvals = [pendingApproval];
+let localAccess = false;
 let linkPreviews = {enabled:false,any_domain:false};
 const plan = {revision:1, explanation:'Release checklist', items:[{step:'Inspect',status:'in_progress'}]};
 let emitPlan = () => {}, emitChat = () => {}, emitChatUpdate = (_: unknown) => {};
@@ -53,10 +54,10 @@ const server = Bun.serve({port: 0, hostname: '127.0.0.1', idleTimeout: 0, async 
   if (path === reportPath && request.method === 'GET' && request.headers.get('cookie')?.includes('fixture_download=ok') && !request.headers.has('authorization')) {
     return new Response('Report', {headers:{'Content-Type':'application/octet-stream', 'Content-Disposition':'attachment; filename="report.txt"'}});
   }
-  if (request.headers.get('authorization') !== 'Bearer ' + token) return new Response('{}', {status: 401});
+  if (!localAccess && request.headers.get('authorization') !== 'Bearer ' + token) return new Response('{}', {status: 401});
   calls.push(request.method + ' ' + path);
   const json = (value: unknown) => Response.json(value);
-  if (path === '/api/config') return json({models, link_previews:linkPreviews, summary_model:'gpt-5.6-luna', skills: ['memento'], mcp_servers: ['memento'], working_directory: '/srv/workspace', auth_source: 'Copilot CLI login'});
+  if (path === '/api/config') return json({auth_required:!localAccess, models, link_previews:linkPreviews, summary_model:'gpt-5.6-luna', skills: ['memento'], mcp_servers: ['memento'], working_directory: '/srv/workspace', auth_source: 'Copilot CLI login'});
   if (path === '/api/settings/link-previews') { linkPreviews = await request.json() as typeof linkPreviews; return json(linkPreviews); }
   if (path === '/api/link-preview') {
     const source = url.searchParams.get('url');
@@ -154,6 +155,22 @@ try {
       } finally { unblock(); }
     });
   } else {
+  await run('local mode: token-free connection and reload', {width:1280,height:860}, 'light', async page => {
+    localAccess = true;
+    try {
+      const request = page.waitForRequest(request => new URL(request.url()).pathname === '/api/config');
+      await page.goto(url);
+      if ((await request).headers().authorization) throw new Error('Local connection sent a bearer token');
+      await page.locator('#connection[data-state=live]').waitFor();
+      if (await page.locator('#auth').isVisible()) throw new Error('Local connection requested a token');
+      await page.locator('#prompt').fill('Inspect the lab');
+      if (!await page.locator('#send').isEnabled()) throw new Error('Local composer stayed disabled');
+      if (await page.locator('#change-token').isVisible()) throw new Error('Local mode offered token settings');
+      await page.reload();
+      await page.locator('#connection[data-state=live]').waitFor();
+      if (await page.locator('#auth').isVisible()) throw new Error('Reload requested a token');
+    } finally { localAccess = false; }
+  });
   for (const scheme of ['light','dark'] as const) await run('Timing chart paint: '+scheme,{width:1250,height:680},scheme,page=>timingPaint(page,url,root,scheme));
   await run('desktop dark: transcript, activity, approval, context', {width: 1280, height: 860}, 'dark', async page => {
     await page.goto(url);

@@ -122,7 +122,14 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
 
     app = FastAPI(title="MS Durable", lifespan=lifespan)
 
-    async def auth(authorization: str = Header(default="")):
+    async def auth(request: Request, authorization: str = Header(default="")):
+        if not settings.auth_required and not authorization:
+            origin = request.headers.get("origin")
+            if (
+                origin is not None and origin != str(request.base_url).rstrip("/")
+            ) or request.headers.get("sec-fetch-site") == "cross-site":
+                raise HTTPException(403, "Same-origin access required")
+            return
         expected = "Bearer " + settings.access_token
         if not settings.access_token or not secrets.compare_digest(authorization, expected):
             raise HTTPException(401, "Bearer token required")
@@ -163,6 +170,7 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
             if root.is_dir():
                 skills.extend(p.parent.name for p in root.glob("*/SKILL.md"))
         return {
+            "auth_required": settings.auth_required,
             "models": models,
             "skills": sorted(set(skills)),
             "mcp_servers": sorted(settings.mcp_servers()),
@@ -364,7 +372,7 @@ def create_app(settings: Settings | None = None, runtime_factory=None):
             and signature.isascii()
             and hmac.compare_digest(signature, download_signature(request.url.path, expires))
         ):
-            await auth(request.headers.get("authorization", ""))
+            await auth(request, request.headers.get("authorization", ""))
 
         # Open the BLOB in the same read snapshot as its metadata so deletion
         # cannot change a response in progress. Never load the entire BLOB.

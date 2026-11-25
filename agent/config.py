@@ -40,6 +40,9 @@ class Settings:
     )
     model: str = field(default_factory=lambda: os.getenv("MS_DURABLE_MODEL", ""))
     access_token: str = field(default_factory=lambda: os.getenv("MS_DURABLE_TOKEN", ""))
+    auth_required: bool = field(
+        default_factory=lambda: os.getenv("MS_DURABLE_AUTH_REQUIRED", "1") != "0"
+    )
     providers_file: Path | None = field(
         default_factory=lambda: (
             Path(os.environ["MS_DURABLE_PROVIDERS_FILE"])

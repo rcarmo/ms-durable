@@ -11,6 +11,7 @@ See the [README](../README.md) to start the app.
 | `MS_DURABLE_HOST` | `127.0.0.1`; use a deliberate bind address for remote access |
 | `MS_DURABLE_PORT` | `8015` |
 | `MS_DURABLE_TOKEN` | Optional server-owned web bearer token |
+| `MS_DURABLE_AUTH_REQUIRED` | `1`; set exactly `0` only for a trusted localhost-only deployment. Anonymous access also covers directly attached Docker peers; foreign-origin browser requests are rejected. Copilot authentication is unchanged. |
 | `MS_DURABLE_AUTH_FILE` | `~/.pi/agent/auth.json`; read-only credential source |
 | `MS_DURABLE_PROVIDERS_FILE` | Optional server-owned BYOK JSON file |
 | `MS_DURABLE_MCP_FILE` | Optional server-owned MCP JSON file |
@@ -150,6 +151,23 @@ make test-browser    # Chromium + actual Copilot model; consumes model allowance
 ```
 
 Both browser targets need Playwright Chromium at `PLAYWRIGHT_BROWSERS_PATH`. The fixture suite tests rendering, approvals, context and the mobile drawer in both themes and saves screenshots to the run directory. The live browser test needs a Copilot credential; use `MS_DURABLE_MODEL` to select its model. Native tests use no real credentials or remote models, but the SDK and runtime may need downloading.
+
+The six implemented scenarios in [local access](../features/local-access.feature)
+are bound to [Python acceptance tests](../tests/test_local_access.py) and run in
+`make check`. They cover default authentication, anonymous local chat creation,
+invalid credentials, foreign origins, cross-site reads, and restoring authentication without
+rotating the saved token. Before implementation, the local creation and
+foreign-origin status scenarios failed with HTTP 401 instead of 200 and 403.
+`make test-ui` additionally checks token-free browser connection, composer
+availability, and reload; existing authenticated-browser checks remain enabled.
+
+Local verification on 2026-11-25 with Python 3.14.10: `make check` passed
+(48 tests, six opt-in native tests skipped); `make test-ui` passed all 12
+checks; the rebuilt image passed `tests/container-smoke.sh`. A clean browser
+connected and reloaded against the running container without a token.
+Both local services were healthy, and the ms-durable container discovered
+exactly six Operator tools and successfully called Minicore's `list_nodes`.
+This verifies connectivity, not live routing convergence or fault recovery.
 
 Run `MS_DURABLE_TIMELINE_PROFILE=verify make test-ui` for the opt-in timeline profile. It streams 24 updates into one turn in a 400-turn fixture, measures Chromium scripting time and 12 viewport resizes, and checks that switching back renders cached history before the server responds. On Chromium 148.0.7778.96, the 24 updates used 1,124 ms of scripting at `4a8e45c` and 16–17 ms after limiting live renders to changed turns. Resize layout time was 45 ms before and 43–44 ms after.
 

@@ -3,7 +3,7 @@ FROM python:3.14-slim@sha256:22eafb370920ad8b429e0aec3fff433e0669968519f5d60469d
 ENV COPILOT_CLI_EXTRACT_DIR=/opt/copilot
 COPY requirements.lock /tmp/requirements.lock
 RUN python -m venv --without-pip /opt/venv \
- && grep -Eiv '^(build|iniconfig|packaging|pluggy|pygments|pyproject_hooks|pytest(-asyncio)?|ruff)==' /tmp/requirements.lock > /tmp/runtime.lock \
+ && grep -Eiv '^(build|gherkin-official|iniconfig|mako|markupsafe|packaging|parse|parse_type|pluggy|pygments|pyproject_hooks|pytest(-asyncio|-bdd)?|ruff|six)==' /tmp/requirements.lock > /tmp/runtime.lock \
  && python -m pip --python /opt/venv install --no-cache-dir --only-binary=:all: -r /tmp/runtime.lock \
  && /opt/venv/bin/python -m copilot download-runtime \
  && chmod -R a+rX /opt/copilot \

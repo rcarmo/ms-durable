@@ -1,0 +1,58 @@
+name: ms-durable
+
+services:
+  ms-durable:
+    image: ms-durable:local
+    build:
+      context: .
+    init: true
+    restart: unless-stopped
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    ports:
+      - "127.0.0.1:${MS_DURABLE_PORT:-8015}:8015"
+    environment:
+      MS_DURABLE_HOST: "0.0.0.0"
+      MS_DURABLE_PORT: "8015"
+      MS_DURABLE_DATA: /state
+      MS_DURABLE_CWD: /work
+      MS_DURABLE_AUTH_FILE: /run/secrets/copilot-login.json
+      MS_DURABLE_AUTH_REQUIRED: "${MS_DURABLE_AUTH_REQUIRED:-1}"
+    volumes:
+      - type: bind
+        source: ${MS_DURABLE_DATA_DIR:-./data}
+        target: /state
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MS_DURABLE_WORKSPACE:-../ms-durable-workspace}
+        target: /work
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${COPILOT_LOGIN_FILE:-./data/copilot-login.json}
+        target: /run/secrets/copilot-login.json
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json, pathlib, urllib.request; token = pathlib.Path('/state/web-token').read_text().strip(); request = urllib.request.Request('http://127.0.0.1:8015/api/health', headers={'Authorization': 'Bearer ' + token}); assert json.load(urllib.request.urlopen(request, timeout=3)) == {'status': 'ok'}"
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

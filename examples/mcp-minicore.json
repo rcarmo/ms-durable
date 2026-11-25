@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "minicore": {
+      "type": "http",
+      "url": "http://management:9000/mcp",
+      "tools": [
+        "get_evidence",
+        "list_nodes",
+        "get_interfaces",
+        "get_routes",
+        "get_neighbors",
+        "ping"
+      ]
+    }
+  }
+}

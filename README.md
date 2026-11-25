@@ -39,6 +39,50 @@ Set `COPILOT_GITHUB_TOKEN` and `MS_DURABLE_TOKEN` in the protected environment f
 
 The [Publish container workflow](.github/workflows/container.yml) smoke-tests the image before pushing to GHCR. It runs on version tags or manually from `main` (see [publishing options](docs/reference.md#container-publishing)).
 
+### Local Compose build
+
+[Dockerfile](Dockerfile) builds on digest-pinned Python 3.14. The
+[Compose configuration](compose.yaml) builds locally, binds only to
+`127.0.0.1:8015`, and mounts a sibling coding workspace at `/work`.
+
+```sh
+mkdir -p data ../ms-durable-workspace
+chmod 700 data
+export LOCAL_UID=$(id -u) LOCAL_GID=$(id -g)
+export COPILOT_LOGIN_FILE=/absolute/path/to/pi/agent/auth.json
+docker compose up -d --build --wait
+docker compose logs --tail 50
+```
+
+The login file must contain the reusable Pi GitHub Copilot OAuth login described
+above. It is mounted read-only and must be readable by the selected UID; the
+service never refreshes that source file. VS Code's encrypted login storage is
+not itself a compatible login file. Do not mount your entire home directory.
+`COPILOT_LOGIN_FILE` defaults to `./data/copilot-login.json`.
+
+Override `MS_DURABLE_WORKSPACE`, `MS_DURABLE_DATA_DIR` and `MS_DURABLE_PORT` as
+needed. Create the workspace and data directories before starting; Compose
+refuses missing bind sources rather than creating root-owned directories.
+The selected UID needs write access to both directories. Persistent state and
+the generated browser token remain in the data directory. Stop with
+`docker compose down`; the bind-mounted files are retained.
+
+For a trusted local deployment, set `MS_DURABLE_AUTH_REQUIRED=0` before
+`docker compose up -d --build --wait`. The browser then connects without asking
+for an access token. Keep the loopback-only port publication: this setting
+also permits anonymous access from directly attached Docker network peers.
+Foreign-origin anonymous browser requests and explicitly invalid bearer tokens
+are rejected. Remove the setting to restore token authentication; the existing
+browser token is retained. Copilot inference still requires its server-side login.
+
+To connect to Minicore, mount [examples/mcp-minicore.json](examples/mcp-minicore.json)
+read-only, set `MS_DURABLE_MCP_FILE` to its container path, and attach this service
+to Minicore's external `minicore_ingress` network. The URL uses Docker DNS
+`http://management:9000/mcp`, not container-local `127.0.0.1`. The example allows
+only the six Operator diagnostic tools and assumes Minicore's private profile;
+it supplies no God credential or Docker socket. Keep deployment-specific mounts
+and external networks in a local Compose override.
+
 ## What the browser adds
 
 I may have gone a bit overboard for a baseline shell. Chats have streaming replies, expandable tool calls, approvals, cancellation, file sharing, per-session plans and a per-turn timing chart of model calls and tools. The UI includes a model picker and native context and compaction controls. Type `/` in the composer for shortcuts. Use the pencil in the header to set an optional `@name` and description. Model changes take effect between turns.

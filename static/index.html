@@ -431,7 +431,7 @@ function when(seconds) {
 function modelName(id) { return config?.models.find(m => m.id === id)?.name || id || ''; }
 function controls() {
   const active = Boolean(context?.active);
-  $('send').disabled = !config || !token || (!$('prompt').value.trim() && !draftImages().length) || sending || Boolean(context && !context.ready);
+  $('send').disabled = !config || (!$('prompt').value.trim() && !draftImages().length) || sending || Boolean(context && !context.ready);
   const label = active ? 'Queue message' : 'Send';
   $('send').setAttribute('aria-label', label); $('send').title = label;
   $('stop').hidden = !selected || !active; $('stop').disabled = sending;
@@ -448,7 +448,7 @@ function controls() {
   for (const b of $('attachments').children) b.disabled = sending;
 }
 async function api(path, {method = 'GET', body, signal} = {}) {
-  const headers = {Authorization: 'Bearer ' + token};
+  const headers = token ? {Authorization: 'Bearer ' + token} : {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const response = await fetch(path, {method, headers, credentials: 'same-origin', signal, body: body === undefined ? undefined : JSON.stringify(body)});
   if (!response.ok) {
@@ -1291,13 +1291,13 @@ function selectSession(id) {
 async function connect() {
   const gen = ++generation; bootController?.abort(); detach(); recentSessions.clear(); config = null; controls();
   const controller = bootController = new AbortController(); let backoff = 1000;
-  if (!token) { $('auth').hidden = false; $('token').focus(); status('Access token required', 'down'); return; }
   while (!controller.signal.aborted) {
     try {
       status('Connecting…', 'wait');
       const [cfg, list] = await Promise.all([json('/api/config', {signal:controller.signal}), json('/api/sessions', {signal:controller.signal})]);
       if (gen !== generation) return;
       config = cfg; sessions = list; renderConfig(); renderSessions(); $('auth').hidden = true; notice();
+      $('change-token').hidden = cfg.auth_required === false;
       if (selected && sessions.some(s => String(s.id) === selected)) selectSession(selected);
       else if (!selected && sessions.length) selectSession(String(sessions[0].id));
       else selectSession(null);
